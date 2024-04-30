@@ -48,6 +48,8 @@ Compute `df['entries']` with `1` for `BUY` and `-1` for `SELL`.
 
 ### Run
 ```
+from mptradelib.vectorised_backtest import Backtest
+
 b = Backtest(df, compute)
 result = b.run(ema_fast=20, ema_slow=50, ema_trend=200, sl=1, tp=2)
 ```
@@ -58,6 +60,8 @@ params passed in `run` can be accessed using `params` inside `compute`
 
 ### Optimize
 ```
+from mptradelib.vectorised_backtest import Backtest
+
 optimization_params = {
     ema_fast: range(1, 20, 1),
     ema_slow: range(20, 50, 1),
