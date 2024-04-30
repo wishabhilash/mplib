@@ -6,7 +6,6 @@ from typing import Callable
 from tqdm import tqdm
 from hyperopt import fmin, tpe, hp, STATUS_OK
 from hyperopt.pyll import scope
-from . import utils
 
 position = None
 orders = []

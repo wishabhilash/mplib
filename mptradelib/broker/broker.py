@@ -7,9 +7,9 @@ except ImportError:
     pass
 
 import os
-import mplib.utils as utils
+from .. import utils
 from .session import FyersSession, ShoonyaSession
-from mplib.shoonya import *
+from ..shoonya import *
 from pydantic import BaseModel, Field
 
 

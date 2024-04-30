@@ -74,11 +74,11 @@ result = b.optimize(runs=1, **optimization_params)
 ### Code
 ```
 import redis
-from mplib.broker.session import FyersSession
-from mplib.broker.ticker import LiveTicker
-from mplib.broker.broker import HistoricalV2
-from mplib.feed import Datas
-from mplib.livetrading import BaseStrategy, LiveTrading
+from mptradelib.broker.session import FyersSession
+from mptradelib.broker.ticker import LiveTicker
+from mptradelib.broker.broker import HistoricalV2
+from mptradelib.feed import Datas
+from mptradelib.livetrading import BaseStrategy, LiveTrading
 import threading
 import pandas_ta as ta
 import datetime as dt
