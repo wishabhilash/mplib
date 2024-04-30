@@ -1,0 +1,29 @@
+[tool.poetry]
+name = "mplib"
+version = "0.1.0"
+description = ""
+authors = ["Abhilash Nanda <wishabhilash@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+pydantic = "2.7.1"
+requests = "2.31.0"
+fyers-apiv3 = "3.0.6"
+retry = "0.9.2"
+pyotp = "2.9.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2.0"
+
+[tool.poetry.group.extra]
+optional = true
+
+[tool.poetry.group.extra.dependencies]
+pandas = "^2.1.4"
+hyperopt = "^0.2.7"
+redis = "^5.0.4"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
