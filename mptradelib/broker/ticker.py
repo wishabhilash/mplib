@@ -4,6 +4,9 @@ from fyers_apiv3.FyersWebsocket.data_ws import FyersDataSocket
 import time
 import random
 import threading
+import queue
+
+from redis import Redis
 
 try:
     import redis
@@ -36,6 +39,10 @@ class LiveTicker(BaseTicker):
     _client: fyersModel.FyersModel = None
     _ws: FyersDataSocket = None
 
+    def __init__(self, broker: None, r: Redis, channel="default-ticks") -> None:
+        super().__init__(broker, r, channel)
+        self._q = queue.Queue(1)
+
     def run(self):
         if self._client is None and self._broker is not None:
             self._client = self._broker.init_client()
@@ -51,12 +58,17 @@ class LiveTicker(BaseTicker):
 
         self._ws.connect()
 
+        while True:
+            syms = self._q.get()
+            if syms:
+                self._ws.subscribe(syms)
+
     def __on_connect(self):
         print("connected")
         self._is_live = True
 
     def subscribe(self, symbols: list):
-        self._ws.subscribe(symbols=symbols)
+        self._q.put(symbols)
 
     def __on_message(self, msg):
         self._r.publish(self._channel, json.dumps(msg))
