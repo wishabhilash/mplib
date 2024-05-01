@@ -3,12 +3,11 @@ import requests
 import threading
 import websocket
 import logging
-import datetime
+import datetime as dt
 import hashlib
 import time
 import urllib
 from time import sleep
-from datetime import datetime as dt
 
 logger = logging.getLogger(__name__)
 
@@ -923,11 +922,11 @@ class NorenApi:
 
         #prepare the data
         if startdate == None:  
-            week_ago = datetime.date.today() - datetime.timedelta(days=7)
-            startdate = dt.combine(week_ago, dt.min.time()).timestamp()
+            week_ago = dt.date.today() - dt.timedelta(days=7)
+            startdate = dt.datetime.combine(week_ago, dt.datetime.min.time()).timestamp()
 
         if enddate == None:            
-            enddate = dt.now().timestamp()
+            enddate = dt.datetime.now().timestamp()
 
         #
         values              = {}

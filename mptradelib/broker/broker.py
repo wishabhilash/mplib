@@ -1,5 +1,4 @@
 import datetime as dt
-import os
 
 try:
     import pandas as pd
@@ -13,72 +12,7 @@ from ..shoonya import *
 from pydantic import BaseModel, Field
 
 
-DATA_PATH = "./data"
-
-
 class Historical:
-    def __init__(self, sesson: FyersSession, data_path=DATA_PATH) -> None:
-        self._session = sesson
-        self._client = None
-        self._data_path = data_path
-
-    def _fetch_data_online(self, data_location, market, symbol, compression_format):
-        for s, e in utils.iterdaterange(step=100):
-            if os.path.exists(f"{data_location}/{e}.csv.{compression_format}"):
-                print(f"skipping {s} to {e}")
-                continue
-
-            payload = {
-                "symbol": f"{market}:{symbol}",
-                "resolution": "1",
-                "date_format": "1",
-                "range_from": s,
-                "range_to": e,
-                "cont_flag": "1",
-            }
-            if self._client is None:
-                self._client = self._session.init_client()
-            data = self._client.history(data=payload)
-            if len(data["candles"]) == 0:
-                break
-
-            df = pd.DataFrame(data["candles"], columns=["datetime", "open", "high", "low", "close", "volume"])
-            df.index = pd.to_datetime(df["datetime"], unit="s", utc=True).map(
-                lambda x: x.tz_convert("Asia/Kolkata")
-            )
-
-            for date, part in df.groupby([df.index.date]):
-                filename = f'{data_location}/{date[0].strftime("%Y-%m-%d")}.csv.zip'
-                part.to_csv(
-                    filename,
-                    index=False,
-                    compression={"method": "zip", "archive_name": filename},
-                )
-
-            print(s, e, "fetching...")
-
-    def _get_data_from_files(self, data_location):
-        return pd.concat(
-            [pd.read_csv(f"{data_location}/{e}") for e in os.listdir(data_location)]
-        )
-
-    def historical(self, market, symbol, compression_format="zip"):
-        data_location = os.path.join(self._data_path, f"{market}_{symbol}")
-
-        if not utils.unpack_data(data_location, compression_format):
-            self._fetch_data_online(data_location, market, symbol, compression_format)
-
-        df = self._get_data_from_files(data_location)
-        df = df.set_index("datetime")
-        df.index = pd.to_datetime(df.index, unit="s", utc=True).tz_convert(
-            "Asia/Kolkata"
-        )
-        df = df.sort_index()
-
-        utils.pack_data(data_location, compression_format)
-        return df
-
-class HistoricalV2:
     def __init__(self, session: FyersSession) -> None:
         self._session = session
         self._client = None
