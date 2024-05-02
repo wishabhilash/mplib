@@ -68,6 +68,7 @@ class Backtest:
             self._backtest(row)
         out_df = pd.DataFrame([asdict(o) for o in self.__orders])
         self.__orders = []
+        self.__position = None
         return out_df, data
 
     def _exit_position(self, row):
