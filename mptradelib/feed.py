@@ -6,6 +6,7 @@ import pandas as pd
 from pydantic import BaseModel, Field
 from collections import OrderedDict
 from typing import Callable, List
+from .broker.broker import Historical
 
 
 class Tick(BaseModel):
@@ -44,12 +45,16 @@ class Series(list):
 class Datas:
     _datas: dict = {}
 
-    def __init__(self, r: redis.Redis, resample_period: int = 1) -> None:
+    def __init__(self, r: redis.Redis, h: Historical, resample_period: int = 1) -> None:
         self._r = r
         self._resample_period = resample_period
+        self._h = h
 
     def _generate_key(self, a: dt.datetime):
         return f"{a:%Y-%m-%d-%H-%M}"
+    
+    def symbols(self):
+        return self._datas.keys()
 
     def update(self, tick: Tick):
         key = self._generate_key(tick.datetime)
@@ -69,18 +74,32 @@ class Datas:
                 ltp=tick.ltp
             ).update(tick).model_dump()
 
-    def load(self, symbol: str, data: List[dict]):
+    def _load_worker(self, symbol: str, start_date: dt.datetime, end_date: dt.datetime):
         try:
             series = self._datas[symbol]
         except KeyError:
             self._datas[symbol] = OrderedDict()
             series = self._datas[symbol]
 
-        for d in data:
+        data = self._h.historical(symbol, 1, start_date, end_date)
+        for d in data.to_dict('records'):
             c = Candle.model_validate(d)
             key = self._generate_key(c.datetime)
             series[key] = c.model_dump()
-            
+
+    def load(self, symbols: List[str], period=7):
+        end_date = dt.datetime.now()
+        start_date = end_date - dt.timedelta(days=period)
+
+        threads = []
+        for symbol in symbols:    
+            t = threading.Thread(target=self._load_worker, args=[symbol, start_date, end_date])
+            t.start()
+            threads.append(t)
+
+        for t in threads:
+            t.join()
+                
 
     def __getitem__(self, index):
         return Series(self._datas[index].values())

@@ -17,7 +17,7 @@ class Historical:
         self._session = session
         self._client = None
 
-    def historical(self, market, symbol, resolution, start, end):
+    def historical(self, symbol, resolution, start, end):
         curr = start
         delta = dt.timedelta(days=100)
         final_data = []
@@ -26,7 +26,7 @@ class Historical:
         
         while curr < end:
             payload = {
-                "symbol": f"{market}:{symbol}",
+                "symbol": symbol,
                 "resolution": f"{resolution}",
                 "date_format": "1",
                 "range_from": f'{curr:%Y-%m-%d}',
