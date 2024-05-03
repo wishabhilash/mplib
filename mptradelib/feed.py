@@ -1,3 +1,4 @@
+import copy
 import redis
 import json
 import threading
@@ -44,14 +45,20 @@ class Series(list):
 
 class Datas:
     _datas: dict = {}
+    _resample_period = 1
 
-    def __init__(self, r: redis.Redis, h: Historical, resample_period: int = 1) -> None:
+    def __init__(self, r: redis.Redis, h: Historical) -> None:
         self._r = r
-        self._resample_period = resample_period
         self._h = h
 
+    def resample(self, period=1):
+        self._resample_period = period
+        return self
+
     def _generate_key(self, a: dt.datetime):
-        return f"{a:%Y-%m-%d-%H-%M}"
+        b = copy.copy(a)
+        c = b - dt.timedelta(minutes=(b.minute % self._resample_period))
+        return f"{c:%Y-%m-%d-%H-%M}"
     
     def symbols(self):
         return self._datas.keys()
@@ -81,7 +88,7 @@ class Datas:
             self._datas[symbol] = OrderedDict()
             series = self._datas[symbol]
 
-        data = self._h.historical(symbol, 1, start_date, end_date)
+        data = self._h.historical(symbol, self._resample_period, start_date, end_date)
         for d in data.to_dict('records'):
             c = Candle.model_validate(d)
             key = self._generate_key(c.datetime)
@@ -123,5 +130,3 @@ class Datas:
     def run(self, channel, on_message: Callable[[Tick],None]):
         t = threading.Thread(target=self._listen, args=[channel, on_message])
         t.start()
-        
-
