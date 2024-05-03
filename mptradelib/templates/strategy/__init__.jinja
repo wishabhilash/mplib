@@ -1,0 +1,39 @@
+from mptradelib.livetrade import LiveTrade
+from mptradelib.broker.session import FyersSession, ShoonyaSession
+from mptradelib.feed import Datas
+from mptradelib.broker.broker import Historical, ShoonyaBroker
+import redis
+import requests
+import os
+from retry import retry
+from .livetrade import {{ strategy_name | to_camel }}
+
+
+@retry(tries=10, delay=2)
+def subscribe(symbols):
+    subs = {
+        "symbols": symbols
+    }
+    result = requests.post(os.getenv("SUBSCRIPTION_ENDPOINT"), data=subs)
+    if result.status_code != 200:
+        raise Exception("unable to subscribe to symbols")
+
+def run(symbols: list, timeframe: int, params: dict):
+    r = redis.Redis(
+        host=os.getenv('REDIS_HOST'),
+        port=os.getenv('REDIS_PORT'),
+        decode_responses=True # <-- this will ensure that binary data is decoded
+    )
+
+    h = Historical(FyersSession())
+    datas = Datas(r, h).resample(timeframe)
+    datas.load(symbols=symbols)
+
+    sb = ShoonyaBroker(ShoonyaSession())
+
+    subscribe(symbols)
+    
+    l = LiveTrade(Popo)
+    l.set_datas(datas)
+    l.set_broker(sb)
+    l.run(**params)

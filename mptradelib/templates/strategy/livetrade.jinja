@@ -1,0 +1,22 @@
+from mptradelib.livetrade import BaseStrategy
+from mptradelib.broker.broker import ProductType
+import pandas_ta as ta
+
+
+class {{ strategy_name | to_camel }}(BaseStrategy):
+    ema_fast: int = 20
+    ema_slow: int = 50
+    sl: int = 1
+    tp: int = 2
+
+    def next(self, symbol, data):
+        ema_fast = ta.ema(data.df.close, self.ema_fast)
+        ema_slow = ta.ema(data.df.close, self.ema_slow)
+
+        if self.b.positions(symbol, ProductType.Intraday):
+            return
+
+        if (ema_fast.iloc[-2] > ema_slow.iloc[-2]) and (ema_fast.iloc[-3] < ema_slow.iloc[-3]):
+            self.b.buy(symbol, qty=10)
+
+

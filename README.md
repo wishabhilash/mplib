@@ -1,3 +1,15 @@
+# Installation
+Create a virtualenv.
+```
+pip install mptradelib
+```
+**Install `pandas_ta` as extra.
+
+# Create strategy
+```
+mpt create <strategy_name>
+```
+
 # Backtest
 
 ### Prepare data (example)
@@ -101,38 +113,34 @@ class MyStrategy(BaseStrategy):
 
         self.b.buy()
 
-r = redis.Redis(
-    host='127.0.0.1',
-    port=6379,
-    decode_responses=True # <-- this will ensure that binary data is decoded
-)
-
-
-f = FyersSession()
-feed = LiveTicker(f, r, "ticks")
-
-end_date = dt.datetime.now()
-start_date = end_date - dt.timedelta(days=7)
-h = HistoricalV2(f)
-hd = h.historical("MCX", "CRUDEOILM24MAYFUT", 1, start_date, end_date)
-
-def producer():
-    feed.run()
-
-    if feed.is_live:
-        feed.subscribe(["MCX:CRUDEOILM24MAYFUT"])
-
-def consumer():
-    datas = Datas(r)
-    datas.load("MCX:CRUDEOILM24MAYFUT", hd.to_dict('records'))
-    l = LiveTrading(MyStrategy)
-    l.set_datas(datas)
-    l.run(ema_fast=20, ema_slow=50, ema_trend=200, sl=1, tp=2)
-    
-
-t = threading.Thread(target=producer)
-t.start()
-
-consumer()
-
 ```
+
+### Run
+```
+mpt runlive <strategy_name> --symbols NSE:SBIN-EQ,NSE:CANB-EQ --param {}
+```
+
+### Param
+Param can be in two formats-
+```
+pars = {
+        "NSE:SBIN-EQ": {
+            "ema_fast": 20,
+            "ema_slow": 50,
+            "ema_trend": 200,
+            "sl": 1,
+            "tp": 2
+        }
+    }
+```
+OR
+```
+{
+    "ema_fast": 20,
+    "ema_slow": 50,
+    "ema_trend": 200,
+    "sl": 1,
+    "tp": 2
+}
+```
+In later case, same params are used for all symbols.
