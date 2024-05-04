@@ -11,6 +11,7 @@
     "from mptradelib.backtest import Backtest\n",
     "from mptradelib.broker.session import FyersSession\n",
     "from mptradelib.broker.broker import Historical\n",
+    "from mptradelib.utils import Tearsheet\n",
     "import datetime as dt"
    ]
   },
@@ -80,6 +81,16 @@
     "b = Backtest(df, compute, sl=1, tp=2, intraday=True)\n",
     "out = b.run(**{k: int(v) for k, v in r[0].items()})\n",
     "print(\"Profit: \", np.sum(out[0].profit))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "t = Tearsheet(out[0])\n",
+    "t.print()"
    ]
   }
  ],
