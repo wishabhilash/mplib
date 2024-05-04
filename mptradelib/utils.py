@@ -1,6 +1,7 @@
 import datetime
 import threading
 import pandas as pd
+import numpy as np
 
 def iterdaterange(step=10):
     now = datetime.datetime.now()
