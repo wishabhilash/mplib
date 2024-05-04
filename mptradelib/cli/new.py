@@ -14,7 +14,7 @@ if not os.path.exists(libpath):
     libpath = os.path.abspath('.')
 
 env = Environment(
-    loader=FileSystemLoader(os.path.join(libpath, "mptradelib/templates/strategy/")),
+    loader=FileSystemLoader(os.path.join(libpath, "templates/strategy/")),
     extensions=['jinja2_strcase.StrcaseExtension']
 )
 
