@@ -11,7 +11,7 @@ logging.addLevelName(logging.INFO, 'info')
 
 libpath = os.path.abspath(os.path.join(sys.executable, f"../../lib/python{'.'.join(sys.version.split('.')[:2])}/site-packages/mptradelib"))
 if not os.path.exists(libpath):
-    libpath = os.path.abspath('.')
+    libpath = os.path.join(os.path.abspath('.'), "mptradelib")
 
 env = Environment(
     loader=FileSystemLoader(os.path.join(libpath, "templates/strategy/")),
@@ -36,7 +36,7 @@ def create(strategy_name):
             shutil.rmtree(strategy_name)
             return
 
-        rendered_file_name = '.'.join(f.split('.')[:-1] + ['py'])
+        rendered_file_name = '.'.join(f.split('.')[:-1])
         rendered_file_path = os.path.join(strategy_name, rendered_file_name)
         if os.path.exists(rendered_file_path):
             ans = click.prompt(f"do u want to overwrite {rendered_file_name}? (yes/no)", default='no')

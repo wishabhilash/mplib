@@ -1,0 +1,93 @@
+{
+ "cells": [
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import pandas_ta as ta\n",
+    "import numpy as np\n",
+    "from mptradelib.backtest import Backtest\n",
+    "from mptradelib.broker.session import FyersSession\n",
+    "from mptradelib.broker.broker import Historical\n",
+    "import datetime as dt"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def cross(ema1, ema2):\n",
+    "    return (ema1 > ema2) & (ema1.shift(1) < ema2.shift(1))\n",
+    "\n",
+    "def compute(df, params):\n",
+    "    df['ema_fast'] = ta.ema(df.close, params['ema_fast_len'])\n",
+    "    df['ema_slow'] = ta.ema(df.close, params['ema_slow_len'])\n",
+    "    df['ema_trend'] = ta.ema(df.close, params['ema_trend_filter_len'])\n",
+    "\n",
+    "    long_cond = (cross(df.ema_fast, df.ema_slow)) & (df.close > df.ema_trend)\n",
+    "    short_cond = (cross(df.ema_slow, df.ema_fast)) & (df.close < df.ema_trend)\n",
+    "\n",
+    "    df['long'] = np.where(long_cond, 1, 0)\n",
+    "    df['long_entries'] = np.where((df.long == 1) & (df.long.shift(1) != 1), 1, 0)\n",
+    "\n",
+    "    df['short'] = np.where(short_cond, -1, 0)\n",
+    "    df['short_entries'] = np.where((df.short == -1) & (df.short.shift(1) != -1), -1, 0)\n",
+    "\n",
+    "    df['entries'] = df.long_entries + df.short_entries\n",
+    "    return df"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "h = Historical(FyersSession())\n",
+    "\n",
+    "end = dt.datetime.now() - dt.timedelta(days=365*2)\n",
+    "start = end - dt.timedelta(days=365*5)\n",
+    "df = h.historical(\"NSE:SBIN-EQ\", resolution=5, start=start, end=end)\n",
+    "\n",
+    "b = Backtest(df, compute, sl=1, tp=2, intraday=True)\n",
+    "\n",
+    "r = b.optimize(\n",
+    "    runs=2,\n",
+    "    ema_fast_len=range(1, 20),\n",
+    "    ema_slow_len=range(20, 50),\n",
+    "    ema_trend_filter_len=range(100, 300),\n",
+    "    sl=range(1),\n",
+    "    tp=range(1, 10),\n",
+    ")\n",
+    "\n",
+    "print(f\"Optimization result: {r[0]}\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "end = dt.datetime.now()\n",
+    "start = end - dt.timedelta(days=365*2)\n",
+    "df = h.historical(\"NSE:SBIN-EQ\", resolution=5, start=start, end=end)\n",
+    "\n",
+    "b = Backtest(df, compute, sl=1, tp=2, intraday=True)\n",
+    "out = b.run(**{k: int(v) for k, v in r[0].items()})\n",
+    "print(\"Profit: \", np.sum(out[0].profit))"
+   ]
+  }
+ ],
+ "metadata": {
+  "language_info": {
+   "name": "python"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 2
+}
