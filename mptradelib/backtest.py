@@ -33,15 +33,14 @@ class Backtest:
         "tp": None
     }
 
-    __position: Order = None
-    __orders = []
-
     def __init__(self, data: pd.DataFrame, compute: Callable[[pd.DataFrame, dict], pd.DataFrame]=None, tp=2, sl=1, intraday=True):
         self.data = data
         self.compute = compute
         self.params['tp'] = tp
         self.params['sl'] = sl
         self.intraday = intraday
+        self.__orders = []
+        self.__position = None
 
     def run(self, **kwargs):
         self.params.update(kwargs)
