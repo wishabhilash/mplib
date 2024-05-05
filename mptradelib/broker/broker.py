@@ -5,7 +5,7 @@ try:
 except ImportError:
     pass
 
-import os
+from retry import retry
 from .. import utils
 from .session import FyersSession, ShoonyaSession
 from ..shoonya import *
@@ -17,6 +17,7 @@ class Historical:
         self._session = session
         self._client = None
 
+    @retry(tries=5, delay=2)
     def historical(self, symbol, resolution, start, end):
         curr = start
         delta = dt.timedelta(days=100)
@@ -35,7 +36,10 @@ class Historical:
             }
             
             data = self._client.history(data=payload)
-            final_data += data["candles"]
+            try:
+                final_data += data["candles"]
+            except IndexError as e:
+                continue
             curr += delta + dt.timedelta(days=1)
         df = pd.DataFrame(final_data, columns=["datetime", "open", "high", "low", "close", "volume"])
         df.index = pd.to_datetime(df["datetime"], unit="s", utc=True)

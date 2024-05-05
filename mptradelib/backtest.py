@@ -6,6 +6,7 @@ from typing import Callable
 from tqdm import tqdm
 from hyperopt import fmin, tpe, hp, STATUS_OK
 from hyperopt.pyll import scope
+from retry import retry
 
 position = None
 orders = []
@@ -108,6 +109,7 @@ class Backtest:
                 raise ValueError(f"step of {k} can not be {type(v.step)}")
         return space
 
+    @retry(tries=10)
     def _optimizer(self, **kwargs):
         space = self._define_space(kwargs)
         
@@ -120,6 +122,7 @@ class Backtest:
             space=space,
             algo=tpe.suggest,
             max_evals=100,
+            show_progressbar=False
         )
         p = {k: int(v) for k, v in best.items()}
         r = self.run(**p)
