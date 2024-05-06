@@ -128,9 +128,10 @@ class Backtest:
         r = self.run(**p)
         return best, np.sum(r[0].profit)
     
-    def optimize(self, runs=5, **kwargs):
+    def optimize(self, runs=5, show_progress=False, **kwargs):
         results = []
-        for _ in tqdm(range(runs)):
+        l = tqdm(range(runs)) if show_progress else range(runs)
+        for _ in l:
             r = self._optimizer(**kwargs)
             results.append(r)
 
