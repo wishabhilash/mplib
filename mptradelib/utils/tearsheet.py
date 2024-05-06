@@ -1,5 +1,3 @@
-import datetime
-import threading
 import pandas as pd
 import numpy as np
 try:
@@ -9,30 +7,11 @@ try:
 except ImportError:
     print("please install plotly by 'pip install plotly' to enable plotting")
 
-def iterdaterange(step=10):
-    now = datetime.datetime.now()
-    while True:
-        end_date = now.strftime("%Y-%m-%d")
-        then = now - datetime.timedelta(days=step)
-        start_date = then.strftime("%Y-%m-%d")
-        yield start_date, end_date
-        now = then - datetime.timedelta(days=1)
-
-def threaded(func):
-    """
-    Decorator that multithreads the target function
-    with the given parameters. Returns the thread
-    created for the function
-    """
-    def wrapper(*args):
-        thread = threading.Thread(target=func, args=args)
-        thread.start()
-        return thread
-    return wrapper
 
 class Tearsheet:
-    def __init__(self, result: pd.DataFrame) -> None:
+    def __init__(self, result: pd.DataFrame, seed=10000) -> None:
         self.df = result
+        self._seed = seed
 
     def total_profit(self):
         return round(np.sum(self.df.profit), 2)
@@ -74,10 +53,35 @@ class Tearsheet:
         return loss_trades.profit.mean()
     
     def risk_reward_ratio(self):
-        return self.avg_profit()/self.avg_loss()
+        return abs(self.avg_profit()/self.avg_loss())
+    
+    def long_short_composition(self):
+        positive = self.df[self.df.profit > 0].groupby('direction').agg({'profit': 'sum'})
+        negative = self.df[self.df.profit < 0].groupby('direction').agg({'profit': 'sum'}).rename(columns={'profit': 'loss'})
+        return pd.concat([positive, negative], axis=1).round(2).rename(index={1: 'long', -1: 'short'})
+    
+    def fund_growth(self, seed=10000):
+        """Calculate value of seed amount till end of series.
+
+        Args:
+            seed (int, optional): _description_. Defaults to 10000.
+
+        Returns:
+            float: non-compounded
+            float: compounded
+        """
+        profit = 0
+        curr_cash = seed
+
+        for row in self.df.itertuples():
+            profit += int(seed/row.entry_price) * row.profit
+            curr_cash += int(curr_cash/row.entry_price) * row.profit
+
+        return round(profit, 2), round(curr_cash, 2)
 
     def print(self):
-        mdd, mddp = self.max_drawdown()
+        mdd, _ = self.max_drawdown()
+        ncom, com = self.fund_growth(seed=self._seed)
         output = f'''
 Performance metrics (From: {self.df.iloc[0].entry_time.date()} To: {self.df.iloc[-1].entry_time.date()})
 
@@ -88,23 +92,49 @@ Win Rate:               {self.win_rate()} %
 Avg. Profit:            {self.avg_profit()}
 Avg. Loss:              {self.avg_loss()}
 Risk-Reward Ratio:      {self.risk_reward_ratio()}
-Max Drawdown:           {mdd} or {mddp} %
+Max Drawdown:           {mdd}
 Sharpe ratio:           {self.sharpe_ratio()}
+Fund growth (given {self._seed} seed):
+    Simple -            {ncom}
+    Compounded -        {com}
 '''
         print(output)
 
     def plot(self):
-        fig = make_subplots(rows=1, cols=2, subplot_titles=("Cum. profit", "Daywise profit"))
+        fig = make_subplots(rows=2, cols=2, subplot_titles=("Cum. profit", "Daywise profit", "Long Short Split"))
         self.plot_equity_curve(fig)
         self.plot_daywise_profit(fig)
+        self.plot_long_short_composition(fig)
         fig.update_layout(
             autosize=False,
             width=1000,
-            height=300,
+            height=600,
             margin=dict(l=50, r=50, b=50, t=50, pad=4),
             showlegend=False
         )
         fig.show()
+
+    def plot_long_short_composition(self, fig: go.Figure):
+        r = self.long_short_composition()
+        trace = go.Bar(
+            x=r.index,
+            y=r.profit,
+            text=r.profit,
+            textposition="inside",
+            textfont_color="white",
+            marker_color='rgb(153, 204, 0, 120)'
+        )
+        fig.add_trace(trace, row=2, col=1)
+
+        trace = go.Bar(
+            x=r.index,
+            y=r.loss,
+            text=r.loss,
+            textposition="inside",
+            textfont_color="white",
+            marker_color='red'
+        )
+        fig.add_trace(trace, row=2, col=1)
 
     def plot_daywise_profit(self, fig: go.Figure):
         cats = [ 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
@@ -119,7 +149,6 @@ Sharpe ratio:           {self.sharpe_ratio()}
     def plot_equity_curve(self, fig: go.Figure):
         cum_profit = go.Scatter(
             name="Cumulative Profit",
-            text="Cumulative Profit",
             x=self.df.entry_time, 
             y=self.df.profit.cumsum(), 
             fill="tozeroy", 
@@ -128,7 +157,7 @@ Sharpe ratio:           {self.sharpe_ratio()}
         )
         fig.add_trace(cum_profit, row=1, col=1)
 
-        dd, ddp = self.drawdown()
+        dd, _ = self.drawdown()
         drawdowns = go.Scatter(
             name="Drawdown",
             x=self.df.entry_time,
