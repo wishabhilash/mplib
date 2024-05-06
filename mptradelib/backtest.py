@@ -7,6 +7,7 @@ from tqdm import tqdm
 from hyperopt import fmin, tpe, hp, STATUS_OK
 from hyperopt.pyll import scope
 from retry import retry
+import multiprocessing as mp
 
 position = None
 orders = []
@@ -110,7 +111,7 @@ class Backtest:
         return space
 
     @retry(tries=10)
-    def _optimizer(self, **kwargs):
+    def _optimizer(self, kwargs):
         space = self._define_space(kwargs)
         
         def objective(params):
@@ -131,9 +132,17 @@ class Backtest:
     def optimize(self, runs=5, show_progress=False, **kwargs):
         results = []
         l = tqdm(range(runs)) if show_progress else range(runs)
-        for _ in l:
-            r = self._optimizer(**kwargs)
-            results.append(r)
+
+        params = [kwargs] * runs
+        if show_progress:
+            with tqdm(total=len(params)) as pbar:
+                with mp.Pool(mp.cpu_count()) as p:
+                    for r in p.imap(self._optimizer, params):
+                        results.append(r)
+                        pbar.update()
+        else:
+            with mp.Pool(mp.cpu_count()) as p:
+                results = p.map(self._optimizer, params)
 
         max_profit = 0
         result = None
