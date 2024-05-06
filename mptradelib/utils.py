@@ -72,50 +72,51 @@ class Tearsheet:
     def avg_loss(self):
         loss_trades = self.df[self.df.profit < 0]
         return loss_trades.profit.mean()
+    
+    def risk_reward_ratio(self):
+        return self.avg_profit()/self.avg_loss()
 
     def print(self):
         mdd, mddp = self.max_drawdown()
         output = f'''
 Performance metrics (From: {self.df.iloc[0].entry_time.date()} To: {self.df.iloc[-1].entry_time.date()})
 
-Total profit:    {self.total_profit()}
-Peak profit:     {self.peak_profit()}
-Win/Loss:        {self.win_vs_loss()[0]}/{self.win_vs_loss()[1]}
-Win Rate:        {self.win_rate()} %
-Avg. Profit:     {self.avg_profit()}
-Avg. Loss:       {self.avg_loss()}
-Max Drawdown:    {mdd} or {mddp} %
-Sharpe ratio:    {self.sharpe_ratio()}
+Total profit:           {self.total_profit()}
+Peak profit:            {self.peak_profit()}
+Win/Loss:               {self.win_vs_loss()[0]}/{self.win_vs_loss()[1]}
+Win Rate:               {self.win_rate()} %
+Avg. Profit:            {self.avg_profit()}
+Avg. Loss:              {self.avg_loss()}
+Risk-Reward Ratio:      {self.risk_reward_ratio()}
+Max Drawdown:           {mdd} or {mddp} %
+Sharpe ratio:           {self.sharpe_ratio()}
 '''
         print(output)
 
     def plot(self):
-        self.plot_equity_curve()
-        self.plot_daywise_profit()
+        fig = make_subplots(rows=1, cols=2, subplot_titles=("Cum. profit", "Daywise profit"))
+        self.plot_equity_curve(fig)
+        self.plot_daywise_profit(fig)
+        fig.update_layout(
+            autosize=False,
+            width=1000,
+            height=300,
+            margin=dict(l=50, r=50, b=50, t=50, pad=4),
+            showlegend=False
+        )
+        fig.show()
 
-    def plot_daywise_profit(self):
+    def plot_daywise_profit(self, fig: go.Figure):
         cats = [ 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
         r = self.df.groupby(self.df.entry_time.dt.day_name()).agg({'profit': 'sum'}).reindex(cats)
 
-        fig = px.bar(
-            title="Daywise profit",
-            data_frame=r,
-            width=500,
-            height=300,
-            text_auto='.2s',
+        trace = go.Bar(
+            x=r.index,
+            y=r.profit
         )
-        fig.update_traces(textfont_size=9, textangle=0, textposition="outside", cliponaxis=False)
-        fig.update_layout(
-            autosize=False,
-            width=500,
-            height=300,
-            margin=dict(l=50, r=50, b=50, t=50, pad=4),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-        fig.show()
+        fig.add_trace(trace, row=1, col=2)
         
-    def plot_equity_curve(self):
-        fig = go.Figure()
+    def plot_equity_curve(self, fig: go.Figure):
         cum_profit = go.Scatter(
             name="Cumulative Profit",
             text="Cumulative Profit",
@@ -125,7 +126,7 @@ Sharpe ratio:    {self.sharpe_ratio()}
             fillcolor="rgb(153, 204, 0, 120)", 
             line={'color': 'rgb(153, 204, 0, 120)'}, 
         )
-        fig.add_trace(cum_profit)
+        fig.add_trace(cum_profit, row=1, col=1)
 
         dd, ddp = self.drawdown()
         drawdowns = go.Scatter(
@@ -136,13 +137,5 @@ Sharpe ratio:    {self.sharpe_ratio()}
             fillcolor="rgba(228,128,68,120)",
             line={'color': 'rgba(228,128,68,120)'},
         )
-        fig.add_trace(drawdowns)
-        fig.update_layout(
-            autosize=False,
-            width=500,
-            height=300,
-            margin=dict(l=50, r=50, b=50, t=50, pad=4),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-        fig.show()
+        fig.add_trace(drawdowns, row=1, col=1)
 
