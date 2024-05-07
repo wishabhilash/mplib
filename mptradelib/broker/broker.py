@@ -49,7 +49,7 @@ class Historical:
         return df
 
 class Position(BaseModel):
-    symbol: str = Field(..., alias='tysm')
+    symbol: str = Field(..., alias='tsym')
     quantity: str = Field(..., alias='netqty')
     product_type: str = Field(..., alias='prd')
 
@@ -75,9 +75,8 @@ class ShoonyaBroker(BaseBroker):
     def __init__(self, session: ShoonyaSession, polling_interval=1) -> None:
         self._session = session
         self._client = self._session.init_client()
-        self._polling_interval = polling_interval
 
-        self._get_positions()
+        self._get_positions(polling_interval)
 
     def _get_symbol(self, term=None, exchange='NSE', instrument_type='EQ'):
         d = self._client.searchscrip(exchange, term)
@@ -162,12 +161,22 @@ class ShoonyaBroker(BaseBroker):
     def _get_positions(self, poll_interval=5):
         while True:
             p = self._client.get_positions()
-            self._positions = pd.DataFrame(p)
-            time.sleep(self._polling_interval)
+            if p is not None:
+                self._positions = pd.DataFrame(p)
+                self._positions.netqty = pd.to_numeric(self._positions.netqty)
+            time.sleep(poll_interval)
 
-    def positions(self, symbol, product_type=ProductType.BO):
-        result = self._positions[(self._positions.tsym == symbol) & (self._positions.prd == product_type) & (self._positions.netqty > 0)]
-        if not len(result.list()):
+    def positions(self, symbol: str, product_type: str=ProductType.BO):
+        if self._positions is None:
+            return None
+        exch, sym = symbol.split(':')
+        result = self._positions[
+            (self._positions.tsym == sym) & 
+            (self._positions.exch == exch) & 
+            (self._positions.prd == product_type) & 
+            (self._positions.netqty > 0)
+        ]
+        if not len(result.index):
             return None
         return [ Position.model_validate(i) for i in result.to_dict('records')]
 

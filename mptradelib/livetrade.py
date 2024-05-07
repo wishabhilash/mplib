@@ -1,26 +1,27 @@
 from .feed import Datas, Tick, Series
 from .broker.broker import BaseBroker
-import pydantic
+import pydantic as pyd
 import copy
 
-class BaseStrategy(pydantic.BaseModel):
+class BaseStrategy(pyd.BaseModel):
+    model_config = pyd.ConfigDict(arbitrary_types_allowed=True)
+
+    b: BaseBroker = pyd.Field(..., alias='broker')
     def next(self, symbol: str, data: Series) -> None:
         raise NotImplementedError
 
 class LiveTrade:
     _datas: Datas = None
     _s: BaseStrategy
-    b: BaseBroker
     _p: dict = {}
 
-    def __init__(self, s: BaseStrategy.__class__) -> None:
-        self._s = s()
+    def __init__(self, s: BaseStrategy.__class__, broker: BaseBroker) -> None:
+        if broker is None:
+            raise ValueError('broker not provided')
+        self._s = s(broker=broker)
 
     def set_datas(self, d: Datas):
         self._datas = d
-
-    def set_broker(self, b: BaseBroker):
-        self.b = b
 
     def _next(self, t: Tick):
         params = self._p.get(t.symbol, {})
@@ -53,9 +54,6 @@ class LiveTrade:
     def run(self, **kwargs):
         if self._datas is None:
             raise ValueError("'datas' not found")
-        
-        if not self.b:
-            raise ValueError('broker not found')
         
         self._p = self._process_params(kwargs)
 

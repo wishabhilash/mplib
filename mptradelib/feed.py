@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field
 from collections import OrderedDict
 from typing import Callable, List
 from .broker.broker import Historical
+from retry import retry
+import requests
+import os
 
 
 class Tick(BaseModel):
@@ -47,9 +50,25 @@ class Datas:
     _datas: dict = {}
     _resample_period = 1
 
-    def __init__(self, r: redis.Redis, h: Historical) -> None:
+    def __init__(self, syms: List[str], r: redis.Redis, h: Historical) -> None:
         self._r = r
         self._h = h
+        self.subscribe(syms)
+        self._syms_map = dict(zip(syms, [True] * len(syms)))
+
+    @retry(tries=10, delay=2)
+    def subscribe(self, symbols):
+        payload = json.dumps({
+            "symbols": symbols
+        })
+
+        headers = {
+            'Content-Type': 'application/json',
+            'Accept':'application/json'
+        }
+        result = requests.post(os.getenv("SUBSCRIPTION_ENDPOINT"), data=payload, headers=headers)
+        if result.status_code != 200:
+            raise Exception("unable to subscribe to symbols")
 
     def resample(self, period=1):
         self._resample_period = period
@@ -94,12 +113,12 @@ class Datas:
             key = self._generate_key(c.datetime)
             series[key] = c.model_dump()
 
-    def load(self, symbols: List[str], period=7):
+    def load(self, period=7):
         end_date = dt.datetime.now()
         start_date = end_date - dt.timedelta(days=period)
 
         threads = []
-        for symbol in symbols:    
+        for symbol in self._syms_map.keys():    
             t = threading.Thread(target=self._load_worker, args=[symbol, start_date, end_date])
             t.start()
             threads.append(t)
@@ -117,6 +136,9 @@ class Datas:
         for msg in con.listen():
             try:
                 d = json.loads(msg['data'])
+                if not self._syms_map.get(d['symbol'], False):
+                    continue
+
                 tick = Tick(
                     datetime=dt.datetime.fromtimestamp(d['last_traded_time']),
                     ltp = d['ltp'],

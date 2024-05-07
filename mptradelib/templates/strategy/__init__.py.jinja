@@ -9,15 +9,6 @@ from retry import retry
 from .livetrade import {{ strategy_name | to_camel }}
 
 
-@retry(tries=10, delay=2)
-def subscribe(symbols):
-    subs = {
-        "symbols": symbols
-    }
-    result = requests.post(os.getenv("SUBSCRIPTION_ENDPOINT"), data=subs)
-    if result.status_code != 200:
-        raise Exception("unable to subscribe to symbols")
-
 def run(symbols: list, timeframe: int, params: dict):
     r = redis.Redis(
         host=os.getenv('REDIS_HOST'),
@@ -26,14 +17,11 @@ def run(symbols: list, timeframe: int, params: dict):
     )
 
     h = Historical(FyersSession())
-    datas = Datas(r, h).resample(timeframe)
-    datas.load(symbols=symbols)
+    datas = Datas(symbols, r, h).resample(timeframe)
+    datas.load()
 
     sb = ShoonyaBroker(ShoonyaSession())
-
-    subscribe(symbols)
     
-    l = LiveTrade(Popo)
+    l = LiveTrade({{ strategy_name | to_camel }}, sb)
     l.set_datas(datas)
-    l.set_broker(sb)
     l.run(**params)
