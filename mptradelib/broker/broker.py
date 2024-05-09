@@ -10,6 +10,7 @@ from .. import utils
 from .session import FyersSession, ShoonyaSession
 from ..shoonya import *
 from pydantic import BaseModel, Field
+from ..feed import Tick
 
 
 class Historical:
@@ -50,7 +51,7 @@ class Historical:
 
 class Position(BaseModel):
     symbol: str = Field(..., alias='tsym')
-    quantity: str = Field(..., alias='netqty')
+    quantity: int = Field(..., alias='netqty')
     product_type: str = Field(..., alias='prd')
 
 
@@ -63,9 +64,65 @@ class BaseBroker:
     
     def positions(self, symbol, product_type):
         raise NotImplementedError
-
-    def orders(self):
+    
+    def coverorder(self, symbol, price, sl, qty=1):
         raise NotImplementedError
+
+    def bracketorder(self, symbol, price, sl, tp, direction, qty=1):
+        raise NotImplementedError
+    
+    def bobuy(self, symbol, price, sl, tp, qty=1):
+        raise NotImplementedError
+
+    def bosell(self, symbol, price, sl, tp, qty=1):
+        raise NotImplementedError
+    
+    def insert_tick(self, tick: Tick):
+        raise NotImplementedError
+
+
+class MockBroker(BaseBroker):
+    __positions: dict = []
+
+    def __get_position_key(self, pos: Position):
+        return f'{pos.symbol}_{pos.product_type}'
+
+    def _add_position(self, pos: Position):
+        self.__positions[self.__get_position_key(pos)] = pos
+
+    def buy(self, symbol, qty=1, price=None):
+        p = Position(tsym=symbol, netqty=qty, prd=ProductType.Intraday)
+        self._add_position(p)
+
+    def sell(self, symbol, qty=1, price=None):
+        p = Position(tsym=symbol, netqty=qty, prd=ProductType.Intraday)
+        self._add_position(p)
+    
+    def positions(self, symbol, product_type):
+        return self.__positions.get([self.__get_position_key(Position(symbol, 0, product_type))], [])
+    
+    def bobuy(self, symbol, price, sl, tp, qty=1):
+        self.bracketorder(symbol, price, sl, tp, qty)
+
+    def bosell(self, symbol, price, sl, tp, qty=1):
+        self.bracketorder(symbol, price, sl, tp, qty)
+    
+    def bracketorder(self, symbol, price, sl, tp, direction, qty=1):
+        p = Position(tsym=symbol, netqty=qty, prd=ProductType.BO)
+        self._add_position(p)
+
+    def insert_tick(self, tick: Tick):
+        keys = []
+        for k in self.__positions.keys():
+            if k.startswith(tick.symbol):
+                keys.append(k)
+
+        # for k in keys:
+        #     pos = self.__positions.get(k)
+        #     if pos.product_type == ProductType.BO:
+        #         if pos.netqty > 0:
+        #             if tick.ltp >= pos
+
 
 
 class ShoonyaBroker(BaseBroker):
