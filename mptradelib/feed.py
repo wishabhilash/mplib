@@ -7,16 +7,11 @@ import pandas as pd
 from pydantic import BaseModel, Field
 from collections import OrderedDict
 from typing import Callable, List
-from .broker.broker import Historical
+from .broker.broker import Historical, Tick
 from retry import retry
 import requests
 import os
 
-
-class Tick(BaseModel):
-    datetime: dt.datetime
-    ltp: float
-    symbol: str
 
 class Candle(BaseModel):
     symbol: str = Field(None, exclude=True, repr=False)
@@ -50,11 +45,16 @@ class Datas:
     _datas: dict = {}
     _resample_period = 1
 
-    def __init__(self, syms: List[str], r: redis.Redis, h: Historical) -> None:
+    def __init__(self, syms: List[str], r: redis.Redis, h: Historical, live: True) -> None:
         self._r = r
         self._h = h
         self.subscribe(syms)
         self._syms_map = dict(zip(syms, [True] * len(syms)))
+        self.__live = live
+    
+    @property
+    def is_live(self):
+        return self.__live
 
     @retry(tries=10, delay=2)
     def subscribe(self, symbols):
@@ -126,7 +126,6 @@ class Datas:
         for t in threads:
             t.join()
                 
-
     def __getitem__(self, index):
         return Series(self._datas[index].values())
     
@@ -150,5 +149,21 @@ class Datas:
                 print(e)
 
     def run(self, channel, on_message: Callable[[Tick],None]):
-        t = threading.Thread(target=self._listen, args=[channel, on_message])
-        t.start()
+        if self.is_live:
+            t = threading.Thread(target=self._listen, args=[channel, on_message])
+            t.start()
+        else:
+            symbol = list(self._datas.keys())[0]
+            series = self._datas.pop(symbol).values()
+            for c in series:
+                key = self._generate_key(c['datetime'])
+                try:
+                    self._datas[symbol][key] = c
+                except KeyError:
+                    self._datas[symbol] = OrderedDict()
+                    self._datas[symbol][key] = c
+                on_message(Tick(
+                    datetime=c['datetime'],
+                    ltp=c['close'],
+                    symbol=symbol
+                ))

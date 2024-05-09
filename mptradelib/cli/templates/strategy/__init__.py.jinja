@@ -9,7 +9,7 @@ from retry import retry
 from .livetrade import {{ strategy_name | to_camel }}
 
 
-def run(symbols: list, timeframe: int, params: dict):
+def run(symbols: list, timeframe: int, params: dict, live: True):
     r = redis.Redis(
         host=os.getenv('REDIS_HOST'),
         port=os.getenv('REDIS_PORT'),
@@ -17,11 +17,16 @@ def run(symbols: list, timeframe: int, params: dict):
     )
 
     h = Historical(FyersSession())
-    datas = Datas(symbols, r, h).resample(timeframe)
+    datas = Datas(symbols, r, h, live=live).resample(timeframe)
     datas.load()
 
-    sb = ShoonyaBroker(ShoonyaSession())
+    broker = None
+    if live:
+        broker = ShoonyaBroker(ShoonyaSession())
+    else:
+        broker = MockBroker()
     
-    l = LiveTrade({{ strategy_name | to_camel }}, sb)
+    l = LiveTrade({{ strategy_name | to_camel }}, broker=broker)
     l.set_datas(datas)
     l.run(**params)
+    return broker.orders()

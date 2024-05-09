@@ -8,9 +8,8 @@ except ImportError:
 from retry import retry
 from .. import utils
 from .session import FyersSession, ShoonyaSession
-from ..shoonya import *
+from .shoonya import *
 from pydantic import BaseModel, Field
-from ..feed import Tick
 
 
 class Historical:
@@ -54,6 +53,33 @@ class Position(BaseModel):
     quantity: int = Field(..., alias='netqty')
     product_type: str = Field(..., alias='prd')
 
+class PositionExt(Position):
+    price: float = None
+    tp_target: float = None
+    sl_target: float = None
+    direction: str = None
+    datetime: dt.datetime = None
+
+class Tick(BaseModel):
+    datetime: dt.datetime
+    ltp: float
+    symbol: str
+
+class Order(BaseModel):
+    entry_time: dt.datetime
+    entry_price: float
+    sl: float
+    tp: float
+    direction: int
+    exit_time: dt.datetime = None
+    exit_price: float = None
+    profit: float = None
+
+    def set_profit(self):
+        if self.direction == 1:
+            self.profit = self.exit_price - self.entry_price
+        else:
+            self.profit = self.entry_price - self.exit_price
 
 class BaseBroker:
     def buy(self, symbol, qty=1, price=None):
@@ -77,52 +103,117 @@ class BaseBroker:
     def bosell(self, symbol, price, sl, tp, qty=1):
         raise NotImplementedError
     
-    def insert_tick(self, tick: Tick):
+    def notify_tick(self, tick: Tick):
         raise NotImplementedError
 
 
 class MockBroker(BaseBroker):
-    __positions: dict = []
+    __positions: dict = {}
+    __ticks: dict = {}
+    __orders: list = []
 
-    def __get_position_key(self, pos: Position):
+    def _get_position_key(self, pos: Position):
         return f'{pos.symbol}_{pos.product_type}'
 
     def _add_position(self, pos: Position):
-        self.__positions[self.__get_position_key(pos)] = pos
+        self.__positions[self._get_position_key(pos)] = pos
 
     def buy(self, symbol, qty=1, price=None):
-        p = Position(tsym=symbol, netqty=qty, prd=ProductType.Intraday)
+        curr_tick = self.__ticks[symbol]
+        p = PositionExt(
+            tsym=symbol,
+            netqty=qty,
+            prd=ProductType.Intraday,
+            price=curr_tick.ltp,
+            direction=BuyorSell.Buy
+        )
         self._add_position(p)
 
     def sell(self, symbol, qty=1, price=None):
-        p = Position(tsym=symbol, netqty=qty, prd=ProductType.Intraday)
+        curr_tick = self.__ticks[symbol]
+        p = PositionExt(
+            tsym=symbol,
+            netqty=qty,
+            prd=ProductType.Intraday,
+            price=curr_tick.ltp,
+            direction=BuyorSell.Buy
+        )
         self._add_position(p)
     
     def positions(self, symbol, product_type):
-        return self.__positions.get([self.__get_position_key(Position(symbol, 0, product_type))], [])
+        pos = Position(tsym=symbol, netqty=0, prd=product_type)
+        k = self._get_position_key(pos)
+        return self.__positions[k] if k in self.__positions else None
     
     def bobuy(self, symbol, price, sl, tp, qty=1):
-        self.bracketorder(symbol, price, sl, tp, qty)
+        self.bracketorder(symbol, price, sl, tp, BuyorSell.Buy, qty)
 
     def bosell(self, symbol, price, sl, tp, qty=1):
-        self.bracketorder(symbol, price, sl, tp, qty)
+        self.bracketorder(symbol, price, sl, tp, BuyorSell.Sell, qty)
     
     def bracketorder(self, symbol, price, sl, tp, direction, qty=1):
-        p = Position(tsym=symbol, netqty=qty, prd=ProductType.BO)
+        curr_tick = self.__ticks[symbol]
+        p = PositionExt(
+            tsym=symbol,
+            netqty=qty,
+            prd=ProductType.BO,
+            price=curr_tick.ltp,
+            direction=direction,
+            sl_target=(curr_tick.ltp - sl) if direction == BuyorSell.Buy else (curr_tick.ltp + sl),
+            tp_target=(curr_tick.ltp + tp) if direction == BuyorSell.Buy else (curr_tick.ltp - tp),
+            datetime=curr_tick.datetime
+        )
         self._add_position(p)
 
-    def insert_tick(self, tick: Tick):
+    def orders(self):
+        return self.__orders
+
+    def notify_tick(self, tick: Tick):
+        self.__ticks[tick.symbol] = tick
+
         keys = []
         for k in self.__positions.keys():
             if k.startswith(tick.symbol):
                 keys.append(k)
 
-        # for k in keys:
-        #     pos = self.__positions.get(k)
-        #     if pos.product_type == ProductType.BO:
-        #         if pos.netqty > 0:
-        #             if tick.ltp >= pos
+        self._check_triggers(tick, keys)
 
+    def _check_triggers(self, tick, keys):
+        for k in keys:
+            pos = self.__positions.get(k)
+            self._check_triggers_for_bo(tick, pos)
+
+    def _check_triggers_for_bo(self, tick: Tick, pos: Position):
+        if pos.product_type == ProductType.BO:
+            if pos.direction == BuyorSell.Buy:
+                if (tick.ltp >= pos.tp_target) or (tick.ltp <= pos.sl_target):
+                    o = Order(
+                        entry_time=pos.datetime,
+                        entry_price=pos.price,
+                        sl=pos.sl_target,
+                        tp=pos.tp_target, 
+                        direction=pos.direction,
+                        exit_price=tick.ltp,
+                        exit_time=tick.datetime,
+                        profit=pos.price - tick.ltp
+                    )
+                    self.__orders.append(o)
+                    self.__positions.pop(self._get_position_key(pos))
+        else:
+            if pos.direction == BuyorSell.Sell:
+                if (tick.ltp <= pos.tp_target) or (tick.ltp >= pos.sl_target):
+                    o = Order(
+                        entry_time=pos.datetime,
+                        entry_price=pos.price,
+                        sl=pos.sl_target,
+                        tp=pos.tp_target, 
+                        direction=pos.direction,
+                        exit_price=tick.ltp,
+                        exit_time=tick.datetime,
+                        profit=tick.ltp - pos.price
+                    )
+                    self.__orders.append(o)
+                    self.__positions.pop(self._get_position_key(pos))
 
 
 class ShoonyaBroker(BaseBroker):

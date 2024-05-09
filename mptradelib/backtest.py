@@ -8,26 +8,7 @@ from hyperopt import fmin, tpe, hp, STATUS_OK
 from hyperopt.pyll import scope
 from retry import retry
 import multiprocessing as mp
-
-position = None
-orders = []
-
-@dataclass
-class Order:
-    entry_time: dt.datetime
-    entry_price: float
-    sl: float
-    tp: float
-    direction: int
-    exit_time: dt.datetime = None
-    exit_price: float = None
-    profit: float = None
-
-    def set_profit(self):
-        if self.direction == 1:
-            self.profit = self.exit_price - self.entry_price
-        else:
-            self.profit = self.entry_price - self.exit_price
+from .broker.broker import Order
 
 class Backtest:
     params: dict = {

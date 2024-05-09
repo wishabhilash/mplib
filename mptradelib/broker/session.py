@@ -9,7 +9,7 @@ from urllib.parse import urlparse, parse_qs
 import requests
 import os
 from retry import retry
-from mptradelib.shoonya import NorenApi
+from .shoonya import NorenApi
 import pyotp
 
 

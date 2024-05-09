@@ -24,6 +24,7 @@ class LiveTrade:
         self._datas = d
 
     def _next(self, t: Tick):
+        self._s.b.notify_tick(t)
         params = self._p.get(t.symbol, {})
         for k, v in params.items():
             setattr(self._s, k, v)
@@ -58,5 +59,6 @@ class LiveTrade:
         self._p = self._process_params(kwargs)
 
         self._datas.run("ticks", self._next)
-        while True:
-            pass
+        if self._datas.is_live:
+            while True:
+                pass
