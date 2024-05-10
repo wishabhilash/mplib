@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from .simulated_trades import SimulateTrades
 try:
     from plotly.subplots import make_subplots
     import plotly.graph_objects as go
@@ -9,9 +10,14 @@ except ImportError:
 
 
 class Tearsheet:
-    def __init__(self, result: pd.DataFrame, seed=10000) -> None:
+    def __init__(self, result: pd.DataFrame, seed=10000, leverage=1) -> None:
         self.df = result
         self._seed = seed
+        self._leverage = leverage
+
+    def profit_factor(self):
+        r = self.df[self.df.profit > 0].profit.sum()/abs(self.df[self.df.profit < 0].profit.sum())
+        return round(r, 2)
 
     def total_profit(self):
         return round(np.sum(self.df.profit), 2)
@@ -60,33 +66,19 @@ class Tearsheet:
         negative = self.df[self.df.profit < 0].groupby('direction').agg({'profit': 'sum'}).rename(columns={'profit': 'loss'})
         return pd.concat([positive, negative], axis=1).round(2).rename(index={1: 'long', -1: 'short'})
     
-    def fund_growth(self, seed=10000):
-        """Calculate value of seed amount till end of series.
-
-        Args:
-            seed (int, optional): _description_. Defaults to 10000.
-
-        Returns:
-            float: non-compounded
-            float: compounded
-        """
-        profit = 0
-        curr_cash = seed
-
-        for row in self.df.itertuples():
-            profit += int(seed/row.entry_price) * row.profit
-            curr_cash += int(curr_cash/row.entry_price) * row.profit
-
-        return round(profit, 2), round(curr_cash, 2)
+    def fund_growth(self):
+        s = SimulateTrades(self.df, initial_cash=self._seed, leverage=self._leverage)
+        return s.simple(), s.compound()
 
     def print(self):
         mdd, _ = self.max_drawdown()
-        ncom, com = self.fund_growth(seed=self._seed)
+        ncom, com = self.fund_growth()
         output = f'''
 Performance metrics (From: {self.df.iloc[0].entry_time.date()} To: {self.df.iloc[-1].entry_time.date()})
 
 Total profit:           {self.total_profit()}
 Peak profit:            {self.peak_profit()}
+Profit factor:          {self.profit_factor()}
 Win/Loss:               {self.win_vs_loss()[0]}/{self.win_vs_loss()[1]}
 Win Rate:               {self.win_rate()} %
 Avg. Profit:            {self.avg_profit()}
@@ -103,20 +95,48 @@ Fund growth (given {self._seed} seed):
     def plot(self):
         fig = make_subplots(rows=2, cols=2, subplot_titles=("Cum. profit", "Daywise profit", "Long Short Split"))
         self.plot_equity_curve(fig)
-        self.plot_daywise_profit(fig)
+        self.plot_daywise_metrics(fig)
         self.plot_long_short_composition(fig)
+        self.plot_hourwise_metrics(fig)
         fig.update_layout(
             autosize=False,
             width=1000,
             height=600,
             margin=dict(l=50, r=50, b=50, t=50, pad=4),
-            showlegend=False
+            showlegend=True
         )
         fig.show()
+
+    def plot_hourwise_metrics(self, fig: go.Figure):
+        r = self.df.groupby(self.df.entry_time.dt.hour).agg({'profit': 'sum'})
+        gdf = self.df[self.df.profit > 0].groupby(self.df.entry_time.dt.hour).agg({'profit': 'count'})
+        ldf = self.df[self.df.profit < 0].groupby(self.df.entry_time.dt.hour).agg({'profit': 'count'})
+
+        trace = go.Bar(
+            name='Total profit',
+            x=r.index,
+            y=r.profit
+        )
+        fig.add_trace(trace, row=2, col=2)
+
+        trace2 = go.Bar(
+            name='Profit trades',
+            x=gdf.index,
+            y=gdf.profit
+        )
+        fig.add_trace(trace2, row=2, col=2)
+
+        trace3 = go.Bar(
+            name='Loss trades',
+            x=ldf.index,
+            y=ldf.profit
+        )
+        fig.add_trace(trace3, row=2, col=2)
 
     def plot_long_short_composition(self, fig: go.Figure):
         r = self.long_short_composition()
         trace = go.Bar(
+            name='Profit',
             x=r.index,
             y=r.profit,
             text=r.profit,
@@ -127,6 +147,7 @@ Fund growth (given {self._seed} seed):
         fig.add_trace(trace, row=2, col=1)
 
         trace = go.Bar(
+            name='Loss',
             x=r.index,
             y=r.loss,
             text=r.loss,
@@ -136,15 +157,32 @@ Fund growth (given {self._seed} seed):
         )
         fig.add_trace(trace, row=2, col=1)
 
-    def plot_daywise_profit(self, fig: go.Figure):
+    def plot_daywise_metrics(self, fig: go.Figure):
         cats = [ 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
         r = self.df.groupby(self.df.entry_time.dt.day_name()).agg({'profit': 'sum'}).reindex(cats)
+        gdf = self.df[self.df.profit > 0].groupby(self.df.entry_time.dt.day_name()).agg({'profit': 'count'})
+        ldf = self.df[self.df.profit < 0].groupby(self.df.entry_time.dt.day_name()).agg({'profit': 'count'})
 
         trace = go.Bar(
+            name='Total profit',
             x=r.index,
             y=r.profit
         )
         fig.add_trace(trace, row=1, col=2)
+
+        trace2 = go.Bar(
+            name='Profit trades',
+            x=gdf.index,
+            y=gdf.profit
+        )
+        fig.add_trace(trace2, row=1, col=2)
+
+        trace3 = go.Bar(
+            name='Loss trades',
+            x=ldf.index,
+            y=ldf.profit
+        )
+        fig.add_trace(trace3, row=1, col=2)
         
     def plot_equity_curve(self, fig: go.Figure):
         cum_profit = go.Scatter(

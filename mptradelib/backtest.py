@@ -9,6 +9,7 @@ from hyperopt.pyll import scope
 from retry import retry
 import multiprocessing as mp
 from .broker.broker import Order
+from typing import List
 
 class Backtest:
     params: dict = {
@@ -22,7 +23,7 @@ class Backtest:
         self.params['tp'] = tp
         self.params['sl'] = sl
         self.intraday = intraday
-        self.__orders = []
+        self.__orders: List[Order] = []
         self.__position = None
 
     def run(self, **kwargs):
@@ -48,7 +49,7 @@ class Backtest:
 
         for row in data.itertuples():
             self._backtest(row)
-        out_df = pd.DataFrame([asdict(o) for o in self.__orders])
+        out_df = pd.DataFrame([o.model_dump() for o in self.__orders])
         self.__orders = []
         self.__position = None
         return out_df, data
@@ -112,8 +113,6 @@ class Backtest:
     
     def optimize(self, runs=5, show_progress=False, **kwargs):
         results = []
-        l = tqdm(range(runs)) if show_progress else range(runs)
-
         params = [kwargs] * runs
         if show_progress:
             with tqdm(total=len(params)) as pbar:
