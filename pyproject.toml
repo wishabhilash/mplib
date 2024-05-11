@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "mptradelib"
-version = "0.4.0"
+version = "0.4.1"
 description = ""
 authors = ["Abhilash Nanda <wishabhilash@gmail.com>"]
 readme = "README.md"
@@ -17,6 +17,7 @@ click = "^8.1.7"
 jinja2-strcase = "^0.0.2"
 redis = "^5.0.4"
 pandas-ta = "^0.3.14b0"
+tqdm = "^4.66.4"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2.0"
