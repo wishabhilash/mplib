@@ -1,23 +1,11 @@
 import datetime as dt
 import pandas as pd
-import numpy as np
 from typing import Callable
 from tqdm import tqdm
-from hyperopt import fmin, tpe, hp, STATUS_OK
-from hyperopt.pyll import scope
 from retry import retry
-import multiprocessing as mp
 from .broker.broker import Order
-from typing import List, Union
-from .utils import Tearsheet
-from pydantic import BaseModel
-from functools import partial
+from itertools import product
 
-
-class urange(BaseModel):
-    start: Union[int, float]
-    stop: Union[int, float]
-    step: Union[int, float] = 1
 
 class Backtest:
     params: dict = {
@@ -52,7 +40,7 @@ class Backtest:
         try:
             data.loc[data.entries != 0, 'entry_price'] = data.open.shift(-1)
         except Exception as e:
-            print(data)
+            print(data, '.............')
             raise e
 
         data.loc[data.entries == 1, 'sl'] = data.close * (1 - self.params['sl']/100)
@@ -100,50 +88,38 @@ class Backtest:
         return orders
 
     def _define_space(self, params):
-        space = {}
+        opt_params = {}
+        constant_params = {}
         for k, v in params.items():
-            if not isinstance(v, urange):
-                raise TypeError(f"{v} is of type {type(v)}. Needs to be of type 'urange'.")
-            
-            if isinstance(v.step, int):
-                space[k] = scope.int(hp.quniform(k, v.start, v.stop, v.step))
-            elif isinstance(v.step, float):
-                space[k] = hp.quniform(k, v.start, v.stop, v.step)
+            if isinstance(v, range):
+                opt_params[k] = v
             else:
-                raise ValueError(f"step of {k} can not be {type(v.step)}")
-        return space
+                constant_params[k] = v
+        return opt_params, constant_params
+    
+    def _get_overfitting_score(self, t):
+        t['abs_profit'] = t.profit.abs()
+        ts = t.sort_values(by=['abs_profit'], ascending=False)
+        os = (ts[:int(len(ts)/100)].abs_profit.sum()/ts.abs_profit.sum())*100
+        rationalized_df = ts[int(len(ts)/100):]
+        return os, rationalized_df
 
     @retry(tries=10)
-    def optimize(self, kwargs, opt_param='profit'):
-        show_progressbar = kwargs.pop('show_progressbar', False)
-        max_evals = kwargs.pop('max_evals', 3000)
-        space = self._define_space(kwargs)
+    def optimize(self, kwargs):
+        opt_params, constant_params = self._define_space(kwargs)
         
         def objective(params):
-            r = self.run(**params)
-            if not len(r):
-                return {'loss': 0, 'status': STATUS_OK}
-            
-            if opt_param == 'profit':
-                loss = -np.sum(r[0].profit) if len(r[0]) else 0
-                return {'loss': loss, 'status': STATUS_OK}
-            elif opt_param == 'com':
-                t = Tearsheet(r[0])
-                ncom, com = t.fund_growth()
-                return {'loss': -com, 'status': STATUS_OK}
-            elif opt_param == 'winrate':
-                t = Tearsheet(r[0])
-                wr = t.win_rate()
-                return {'loss': -wr, 'status': STATUS_OK}
-        
-        best = fmin(
-            fn=objective,
-            space=space,
-            algo=tpe.suggest,
-            max_evals=max_evals,
-            show_progressbar=show_progressbar
-        )
-        p = {k: int(v) for k, v in best.items()}
-        r = self.run(**p)
-        return best, np.sum(r[0].profit)
-        
+            r, _ = self.run(**params)
+            os, rdf = self._get_overfitting_score(r.copy())
+            if os > 10:
+                r = rdf
+                print("removing event effect - ", param)
+            return {'params': params, 'trades': r}
+
+        results = []
+        for p in product(*opt_params.values()):
+            param = dict(zip(opt_params.keys(), p))
+            param.update(constant_params)
+            r = objective(param)
+            results.append(r)
+        return results

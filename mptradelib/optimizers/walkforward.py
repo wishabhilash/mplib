@@ -1,155 +1,77 @@
-import json
+import pydantic as pyd
 import pandas as pd
-from tqdm import tqdm
-import os
-import plotly.graph_objects as go
-from mptradelib.utils import Tearsheet
 from mptradelib.backtest import Backtest
 from typing import Callable
-import datetime as dt
-import multiprocessing as mp
-from functools import partial
+from tqdm import tqdm
+import plotly.graph_objects as go
+
+class Stage(pyd.BaseModel):
+    model_config = pyd.ConfigDict(arbitrary_types_allowed=True)
+
+    df: pd.DataFrame
+    stage_no: int
+    stage_size: int
+    test_fraction: float = 0.25
+
+    @property
+    def test_df(self):
+        test_size = self._get_test_size()
+        return self.stage_df[len(self.stage_df)-test_size : ]
+    
+    @property
+    def opt_df(self):
+        test_size = self._get_test_size()
+        return self.stage_df[:len(self.stage_df)-test_size]
+    
+    @property
+    def stage_df(self):
+        test_size = self._get_test_size()
+        start_idx = test_size * self.stage_no
+        return self.df[start_idx:start_idx + self.stage_size]
+    
+    def _get_test_size(self):
+        return int(self.stage_size * self.test_fraction)
+
+    def run(self, compute, **params: dict):
+        b = Backtest(self.opt_df, compute=compute)
+        return b.optimize(params)
 
 
-class WalkForward:
-    def __init__(self, 
-                 df: pd.DataFrame, 
-                 compute: Callable[[pd.DataFrame, dict], None], 
-                 optimization_params: dict, 
-                 freq='W', 
-                 cache_path = ".", 
-                 intraday_exit_time: dt.time = dt.time(15,10,0),
-                 intraday=True,
-        ) -> None:
-        self.df = df
-        self._compute = compute
-        self._oparam = optimization_params
-        self._freq = freq
-        self._intraday = intraday
-        self._intraday_exit_time = intraday_exit_time
-        self._cache_path = os.path.join(cache_path, 'walkforward-reports')
-        if not os.path.exists(self._cache_path):
-            os.mkdir(self._cache_path)
+class Walkforward(pyd.BaseModel):
+    model_config = pyd.ConfigDict(arbitrary_types_allowed=True)
+
+    df: pd.DataFrame
+    stage_count: int = 6
+    test_fraction: float = 0.25
+    strategy: Callable[[pd.DataFrame, dict],pd.DataFrame]
+
+    def _create_stages(self) -> Stage:
+        stage_size = int(len(self.df)/(1 + (self.stage_count-1) * self.test_fraction))
+        stages = []
+        for i in range(self.stage_count):
+            stage = Stage(df=self.df, stage_no=i, stage_size=stage_size, test_fraction=self.test_fraction)
+            stages.append(stage)
+        return stages
+
+    def run(self, **params: dict):
+        results = []
+        stages = self._create_stages()
+        with tqdm(total=len(stages)) as pb:
+            for stage in stages:
+                r = stage.run(self.strategy,**params)
+                results.append(r)
+                pb.update()
+        return results
 
     def _get_date(self, d, index):
         return d.datetime.iloc[index].strftime("%Y-%m-%d")
 
-    def _generate_date_ranges(self, df):
-        rng = pd.date_range(self._get_date(df, 0), self._get_date(df, len(df) - 1), freq=self._freq)
-        rng = pd.Series(rng)
-        return pd.DataFrame({
-            'mstart': rng,
-            'mend': rng.shift(-1),
-        }).dropna()
-
-    def data_splitter(self, train_size, test_size, step=1):
-        date_ranges = self._generate_date_ranges(self.df)
-        
-        splits = []
-        window = (train_size + test_size) * step
-        for dfs in date_ranges.rolling(window, step=step):
-            if len(dfs.index) < window:
-                continue
-
-            s = dfs.iloc[0].mstart.date().strftime("%Y-%m-%d")
-            e = dfs.iloc[window - 1 - (test_size * step)].mend.date().strftime("%Y-%m-%d")
-            e2 = dfs.iloc[window - 1].mend.date().strftime("%Y-%m-%d")
-            opt_set = self.df.loc[s:e]
-            test_set = self.df.loc[e:e2]
-            splits.append((opt_set, test_set, self._cache_path))
-        return splits
-    
-    def _calculate_result(self):
-        dflist = []
-        for dirname in os.listdir(self._cache_path):
-            if dirname == '.DS_Store':
-                continue
-            try:
-                filepath = os.path.join(self._cache_path, dirname, "report.csv")
-            except Exception as e:
-                print(f'reading {filepath}')
-                raise e
-            
-            if os.path.exists(filepath):
-                try:
-                    dff = pd.read_csv(filepath)
-                except Exception as e:
-                    print(f'file {filepath}: {e}')
-                    continue
-
-                dflist.append(dff)
-
-        fdf = pd.concat(dflist)
-        fdf = fdf.sort_values(by=['entry_time']).drop_duplicates().reset_index(drop='index')
-        fdf.entry_time = pd.to_datetime(fdf.entry_time)
-        fdf.exit_time = pd.to_datetime(fdf.exit_time)
-        fdf.to_csv('result.csv', index=False)
-
-        t = Tearsheet(fdf)
-        t.print()
-        t.plot()
-
-    def _optimize(self, df, opt_param='profit'):
-        b = Backtest(df, self._compute, sl=1, tp=2, intraday_exit_time=self._intraday_exit_time, intraday=self._intraday)
-        r = b.optimize(
-            self._oparam,
-            opt_param=opt_param
-        )
-        return r[0] if r is not None else None
-
-    def _create_optimization_worker(self, opt_param, params):
-        dfopt, dftest, reports_path = params
-
-        filename = f'{dftest.iloc[0].datetime.strftime("%Y-%m-%d")}-{dftest.iloc[-1].datetime.strftime("%Y-%m-%d")}'
-        dirpath = os.path.join(reports_path, filename)
-        if not os.path.exists(dirpath):
-            os.mkdir(dirpath)
-        
-        param_path = os.path.join(dirpath, 'params.json')
-        report_path = os.path.join(dirpath, 'report.csv')
-
-        if os.path.exists(report_path):
-            try:
-                t = pd.read_csv(report_path)
-                return t
-            except Exception as e:
-                print(e)
-                return
-
-        r = self._optimize(dfopt, opt_param=opt_param)
-        if r is None:
-            return r
-        
-        with open(param_path, 'w') as f:
-            f.write(json.dumps(r))
-
-        c = Backtest(dftest, self._compute, sl=1, tp=2, intraday_exit_time=self._intraday_exit_time, intraday=True)
-        out = c.run(**{k: int(v) for k, v in r.items()})
-        if out is not None:
-            out[0].to_csv(report_path, index=False)
-
-
-    def run(self, train_size, test_size, step=1, opt_param='profit'):
-        splits = self.data_splitter(train_size, test_size, step)
-        try:
-            self._plot_splits(splits)
-        except Exception:
-            pass
-        self._optimize_splits(splits, opt_param)
-        self._calculate_result()
-
-    def _optimize_splits(self, splits, opt_param):
-        with tqdm(total=len(splits)) as pbar:
-            with mp.Pool(mp.cpu_count()) as p:
-                f = partial(self._create_optimization_worker, opt_param)
-                for _ in p.imap(f, splits):
-                    pbar.update()
-
-    def _plot_splits(self, splits):
+    def plot_splits(self):
+        stages = self._create_stages()
         fig = go.Figure()
-        for i in range(len(splits)):
-            s = splits[i]
-            opt_set, test_set, _ = s
+        for i in range(len(stages)):
+            s = stages[i]
+            opt_set, test_set = s.opt_df, s.test_df
             fig.add_trace(go.Scatter(
                 name='Optimization', 
                 y=[-i,-i],
@@ -167,11 +89,10 @@ class WalkForward:
 
 
         fig.update_layout(
-            yaxis_range=[-len(splits)-1, 1],
+            yaxis_range=[-len(stages)-1, 1],
             hovermode='x unified',
             showlegend=False,
-            title="Walkforward split",
+            title="Walkforward stages",
         )
         fig.update_yaxes(visible=False)
         fig.show()
-
