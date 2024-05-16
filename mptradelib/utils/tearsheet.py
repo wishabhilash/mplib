@@ -67,7 +67,7 @@ class Tearsheet:
         return pd.concat([positive, negative], axis=1).round(2).rename(index={1: 'long', -1: 'short'})
     
     def fund_growth(self):
-        s = SimulateTrades(self.df, initial_cash=self._seed, leverage=self._leverage)
+        s = SimulateTrades(self.df.dropna(), initial_cash=self._seed, leverage=self._leverage)
         return s.simple(), s.compound()
 
     def print(self):

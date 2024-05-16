@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "mptradelib"
-version = "0.4.1"
+version = "0.4.2"
 description = ""
 authors = ["Abhilash Nanda <wishabhilash@gmail.com>"]
 readme = "README.md"

@@ -3,17 +3,30 @@ import pandas as pd
 from tqdm import tqdm
 import os
 import plotly.graph_objects as go
-from ..utils import Tearsheet
-from ..backtest import Backtest
+from mptradelib.utils import Tearsheet
+from mptradelib.backtest import Backtest
 from typing import Callable
+import datetime as dt
+import multiprocessing as mp
+from functools import partial
 
 
 class WalkForward:
-    def __init__(self, df: pd.DataFrame, compute: Callable[[pd.DataFrame, dict], None], optimization_params: dict, freq='W', cache_path = ".") -> None:
+    def __init__(self, 
+                 df: pd.DataFrame, 
+                 compute: Callable[[pd.DataFrame, dict], None], 
+                 optimization_params: dict, 
+                 freq='W', 
+                 cache_path = ".", 
+                 intraday_exit_time: dt.time = dt.time(15,10,0),
+                 intraday=True,
+        ) -> None:
         self.df = df
         self._compute = compute
         self._oparam = optimization_params
         self._freq = freq
+        self._intraday = intraday
+        self._intraday_exit_time = intraday_exit_time
         self._cache_path = os.path.join(cache_path, 'walkforward-reports')
         if not os.path.exists(self._cache_path):
             os.mkdir(self._cache_path)
@@ -56,8 +69,15 @@ class WalkForward:
             except Exception as e:
                 print(f'reading {filepath}')
                 raise e
-            dff = pd.read_csv(filepath)
-            dflist.append(dff)
+            
+            if os.path.exists(filepath):
+                try:
+                    dff = pd.read_csv(filepath)
+                except Exception as e:
+                    print(f'file {filepath}: {e}')
+                    continue
+
+                dflist.append(dff)
 
         fdf = pd.concat(dflist)
         fdf = fdf.sort_values(by=['entry_time']).drop_duplicates().reset_index(drop='index')
@@ -69,16 +89,15 @@ class WalkForward:
         t.print()
         t.plot()
 
-    def _optimize(self, df, runs=5, show_progress=False):
-        b = Backtest(df, self._compute, sl=1, tp=2, intraday=True)
+    def _optimize(self, df, opt_param='profit'):
+        b = Backtest(df, self._compute, sl=1, tp=2, intraday_exit_time=self._intraday_exit_time, intraday=self._intraday)
         r = b.optimize(
-            runs=runs,
-            show_progress=show_progress,
-            **self._oparam
+            self._oparam,
+            opt_param=opt_param
         )
-        return r[0]
+        return r[0] if r is not None else None
 
-    def _create_optimization_worker(self, params, runs=5):
+    def _create_optimization_worker(self, opt_param, params):
         dfopt, dftest, reports_path = params
 
         filename = f'{dftest.iloc[0].datetime.strftime("%Y-%m-%d")}-{dftest.iloc[-1].datetime.strftime("%Y-%m-%d")}'
@@ -90,29 +109,41 @@ class WalkForward:
         report_path = os.path.join(dirpath, 'report.csv')
 
         if os.path.exists(report_path):
-            return pd.read_csv(report_path)
+            try:
+                t = pd.read_csv(report_path)
+                return t
+            except Exception as e:
+                print(e)
+                return
 
-        r = self._optimize(dfopt, runs)
+        r = self._optimize(dfopt, opt_param=opt_param)
+        if r is None:
+            return r
+        
         with open(param_path, 'w') as f:
             f.write(json.dumps(r))
 
-        c = Backtest(dftest, self._compute, sl=1, tp=2, intraday=True)
+        c = Backtest(dftest, self._compute, sl=1, tp=2, intraday_exit_time=self._intraday_exit_time, intraday=True)
         out = c.run(**{k: int(v) for k, v in r.items()})
-        out[0].to_csv(report_path, index=False)
-        return out[0]
+        if out is not None:
+            out[0].to_csv(report_path, index=False)
 
 
-    def run(self, train_size, test_size, step=1, runs=5):
+    def run(self, train_size, test_size, step=1, opt_param='profit'):
         splits = self.data_splitter(train_size, test_size, step)
-        self._plot_splits(splits)
-        self._optimize_splits(splits, runs)
+        try:
+            self._plot_splits(splits)
+        except Exception:
+            pass
+        self._optimize_splits(splits, opt_param)
         self._calculate_result()
 
-    def _optimize_splits(self, splits, runs):
+    def _optimize_splits(self, splits, opt_param):
         with tqdm(total=len(splits)) as pbar:
-            for p in splits:
-                self._create_optimization_worker(p, runs)
-                pbar.update()
+            with mp.Pool(mp.cpu_count()) as p:
+                f = partial(self._create_optimization_worker, opt_param)
+                for _ in p.imap(f, splits):
+                    pbar.update()
 
     def _plot_splits(self, splits):
         fig = go.Figure()
