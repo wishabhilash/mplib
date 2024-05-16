@@ -1,1 +1,1 @@
-from .walkforward import WalkForward
+from .walkforward import Walkforward
