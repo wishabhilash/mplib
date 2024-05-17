@@ -1,10 +1,10 @@
 import datetime as dt
 import pandas as pd
 from typing import Callable
-from tqdm import tqdm
 from retry import retry
 from .broker.broker import Order
 from itertools import product
+import multiprocessing as mp
 
 
 class Backtest:
@@ -104,22 +104,26 @@ class Backtest:
         rationalized_df = ts[int(len(ts)/100):]
         return os, rationalized_df
 
+    def _objective(self, params):
+        r, _ = self.run(**params)
+        os, rdf = self._get_overfitting_score(r.copy())
+        if os > 10:
+            r = rdf
+            print("removing event effect - ", params)
+        return {'params': params, 'trades': r}
+
+
     @retry(tries=10)
     def optimize(self, kwargs):
         opt_params, constant_params = self._define_space(kwargs)
         
-        def objective(params):
-            r, _ = self.run(**params)
-            os, rdf = self._get_overfitting_score(r.copy())
-            if os > 10:
-                r = rdf
-                print("removing event effect - ", param)
-            return {'params': params, 'trades': r}
-
         results = []
+        params = []
         for p in product(*opt_params.values()):
             param = dict(zip(opt_params.keys(), p))
             param.update(constant_params)
-            r = objective(param)
-            results.append(r)
+            params.append(param)
+            
+        with mp.Pool(mp.cpu_count()) as p:
+            results = p.map(self._objective, params)
         return results

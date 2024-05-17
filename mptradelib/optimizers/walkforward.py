@@ -1,9 +1,13 @@
 import pydantic as pyd
 import pandas as pd
 from mptradelib.backtest import Backtest
-from typing import Callable
+from typing import Callable, List
 from tqdm import tqdm
-import plotly.graph_objects as go
+
+try:
+    import plotly.graph_objects as go
+except ImportError:
+    pass
 
 class Stage(pyd.BaseModel):
     model_config = pyd.ConfigDict(arbitrary_types_allowed=True)
@@ -32,7 +36,7 @@ class Stage(pyd.BaseModel):
     def _get_test_size(self):
         return int(self.stage_size * self.test_fraction)
 
-    def run(self, compute, **params: dict):
+    def optimize(self, compute, **params: dict):
         b = Backtest(self.opt_df, compute=compute)
         return b.optimize(params)
 
@@ -53,14 +57,21 @@ class Walkforward(pyd.BaseModel):
             stages.append(stage)
         return stages
 
-    def run(self, **params: dict):
+    def optimize(self, **params: dict):
+        show_progressbar = params.pop('show_progressbar', True)
+
         results = []
         stages = self._create_stages()
-        with tqdm(total=len(stages)) as pb:
+        if show_progressbar:
+            with tqdm(total=len(stages)) as pb:
+                for stage in stages:
+                    r = stage.optimize(self.strategy,**params)
+                    results.append(r)
+                    pb.update()
+        else:
             for stage in stages:
-                r = stage.run(self.strategy,**params)
+                r = stage.optimize(self.strategy,**params)
                 results.append(r)
-                pb.update()
         return results
 
     def _get_date(self, d, index):
@@ -96,3 +107,51 @@ class Walkforward(pyd.BaseModel):
         )
         fig.update_yaxes(visible=False)
         fig.show()
+
+class MultiSymbolWalkforwardAnalysis(pyd.BaseModel):
+    model_config = pyd.ConfigDict(arbitrary_types_allowed=True)
+
+    dfs: List[pd.DataFrame]
+    stage_count: int = 6
+    test_fraction: float = 0.25
+    strategy: Callable[[pd.DataFrame, dict],pd.DataFrame]
+
+    def optimize(self, **params: dict):
+        results = []
+        with tqdm(total=len(self.dfs)) as pb:
+            for df in self.dfs:
+                w = Walkforward(
+                    df=df, 
+                    stage_count=self.stage_count, 
+                    test_fraction=self.test_fraction, 
+                    strategy=self.strategy
+                )
+                r = w.optimize(**params)
+                results.append(r)
+                pb.update()
+        return self._aggregate(results)
+    
+    def _aggregate(self, results):
+        stages = []
+        for i in range(len(results[0])):
+            stage = []
+            for sym in results:
+                stage.append(sym[i])
+            stages.append(stage)
+
+        final_result = []
+        for stage in stages:
+            pp = []
+            for i in range(len(stage[0])):
+                result_agg = {
+                    'trades': []
+                }
+                for j in range(len(stage)):
+                    result_agg['params'] = stage[j][i]['params']
+                    result_agg['trades'].append(stage[j][i]['trades'])
+                result_agg['trades'] = pd.concat(result_agg['trades'])
+                pp.append(result_agg)
+            final_result.append(pp)
+        return final_result
+
+        
