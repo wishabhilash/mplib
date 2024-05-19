@@ -3,42 +3,47 @@ import pandas as pd
 from mptradelib.backtest import Backtest
 from typing import Callable, List
 from tqdm import tqdm
-
-try:
-    import plotly.graph_objects as go
-except ImportError:
-    pass
+import plotly.graph_objects as go
 
 class Stage(pyd.BaseModel):
     model_config = pyd.ConfigDict(arbitrary_types_allowed=True)
 
-    df: pd.DataFrame
+    main_df: pd.DataFrame = pyd.Field(..., alias='df')
     stage_no: int
     stage_size: int
     test_fraction: float = 0.25
+    _opt_result: pd.DataFrame = None
 
     @property
     def test_df(self):
         test_size = self._get_test_size()
-        return self.stage_df[len(self.stage_df)-test_size : ]
+        return self.df[len(self.df)-test_size : ]
     
     @property
     def opt_df(self):
         test_size = self._get_test_size()
-        return self.stage_df[:len(self.stage_df)-test_size]
+        return self.df[:len(self.df)-test_size]
     
     @property
-    def stage_df(self):
+    def df(self):
         test_size = self._get_test_size()
         start_idx = test_size * self.stage_no
-        return self.df[start_idx:start_idx + self.stage_size]
+        return self.main_df[start_idx:start_idx + self.stage_size]
+    
+    @property
+    def opt_result(self):
+        return self._opt_result
     
     def _get_test_size(self):
         return int(self.stage_size * self.test_fraction)
 
     def optimize(self, compute, **params: dict):
         b = Backtest(self.opt_df, compute=compute)
-        return b.optimize(params)
+        self._opt_result = b.optimize(params)
+        return self
+
+    def validate(self):
+        pass
 
 
 class Walkforward(pyd.BaseModel):
@@ -48,8 +53,9 @@ class Walkforward(pyd.BaseModel):
     stage_count: int = 6
     test_fraction: float = 0.25
     strategy: Callable[[pd.DataFrame, dict],pd.DataFrame]
+    stages: List[Stage] = []
 
-    def _create_stages(self) -> Stage:
+    def _create_stages(self) -> List[Stage]:
         stage_size = int(len(self.df)/(1 + (self.stage_count-1) * self.test_fraction))
         stages = []
         for i in range(self.stage_count):
@@ -60,19 +66,22 @@ class Walkforward(pyd.BaseModel):
     def optimize(self, **params: dict):
         show_progressbar = params.pop('show_progressbar', True)
 
-        results = []
-        stages = self._create_stages()
+        stages: Stage = self._create_stages()
         if show_progressbar:
             with tqdm(total=len(stages)) as pb:
                 for stage in stages:
-                    r = stage.optimize(self.strategy,**params)
-                    results.append(r)
+                    s = stage.optimize(self.strategy, **params)
+                    self.stages.append(s)
                     pb.update()
         else:
             for stage in stages:
-                r = stage.optimize(self.strategy,**params)
-                results.append(r)
-        return results
+                stage.optimize(self.strategy, **params)
+                self.stages.append(stage)
+        return self
+    
+    @property
+    def opt_result(self):
+        return [s.opt_result for s in self.stages]
 
     def _get_date(self, d, index):
         return d.datetime.iloc[index].strftime("%Y-%m-%d")
@@ -115,9 +124,10 @@ class MultiSymbolWalkforwardAnalysis(pyd.BaseModel):
     stage_count: int = 6
     test_fraction: float = 0.25
     strategy: Callable[[pd.DataFrame, dict],pd.DataFrame]
+    walkforwards: List[Walkforward] = []
+    __computed_result = None
 
     def optimize(self, **params: dict):
-        results = []
         with tqdm(total=len(self.dfs)) as pb:
             for df in self.dfs:
                 w = Walkforward(
@@ -126,29 +136,36 @@ class MultiSymbolWalkforwardAnalysis(pyd.BaseModel):
                     test_fraction=self.test_fraction, 
                     strategy=self.strategy
                 )
-                r = w.optimize(**params)
-                results.append(r)
+                w.optimize(**params)
                 pb.update()
-        return self._aggregate(results)
+                self.walkforwards.append(w)
+        return self
     
-    def _aggregate(self, results):
+    @property
+    def opt_result(self):
+        return [w.opt_result for w in self.walkforwards]
+
+    def transform_to_agg_stages(self):
+        if self.__computed_result is not None:
+            return self.__computed_result
+        
         stages = []
-        for i in range(len(results[0])):
+        for i in range(len(self.walkforwards[0].opt_result)):
             stage = []
-            for sym in results:
-                stage.append(sym[i])
+            for sym in self.walkforwards:
+                stage.append(sym.stages[i])
             stages.append(stage)
 
         final_result = []
         for stage in stages:
             pp = []
-            for i in range(len(stage[0])):
+            for i in range(len(stage[0].opt_result)):
                 result_agg = {
                     'trades': []
                 }
                 for j in range(len(stage)):
-                    result_agg['params'] = stage[j][i]['params']
-                    result_agg['trades'].append(stage[j][i]['trades'])
+                    result_agg['params'] = stage[j].opt_result[i]['params']
+                    result_agg['trades'].append(stage[j].opt_result[i]['trades'])
                 result_agg['trades'] = pd.concat(result_agg['trades'])
                 pp.append(result_agg)
             final_result.append(pp)
