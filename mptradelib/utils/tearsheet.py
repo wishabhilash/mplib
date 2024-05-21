@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 from .simulated_trades import SimulateTrades
+import pydantic as pyd
+from typing import List
 try:
     from plotly.subplots import make_subplots
     import plotly.graph_objects as go
@@ -8,6 +10,10 @@ try:
 except ImportError:
     print("please install plotly by 'pip install plotly' to enable plotting")
 
+class Line(pyd.BaseModel):
+    colname: str
+    name: str = None
+    overlay: bool = True
 
 class Tearsheet:
     def __init__(self, result: pd.DataFrame, seed=10000, leverage=1) -> None:
@@ -206,3 +212,75 @@ Fund growth (given {self._seed} seed):
         )
         fig.add_trace(drawdowns, row=1, col=1)
 
+
+    def plot_chart(self, name, df, trades, lines: List[Line], jupyter=False):
+        row_count = 1 + len([l for l in lines if not l.overlay])
+        last_date = df.iloc[len(df) - 1].datetime.date()
+        filtered_df = df[df.datetime.dt.date == last_date]
+        filtered_trades = trades[trades.entry_time.dt.date == last_date]
+
+        cs_chart = go.Candlestick(
+            x=filtered_df.datetime,
+            open=filtered_df.open,
+            high=filtered_df.high,
+            low=filtered_df.low,
+            close=filtered_df.close,
+            showlegend=False,
+            name=name
+        )
+
+        main_trace = [cs_chart]
+        non_overlay_traces = []
+        for l in lines:
+            trace = go.Scatter(
+                x=filtered_df.datetime,
+                y=filtered_df[l.colname],
+                name=l.name,
+            )
+            
+            if l.overlay:
+                main_trace.append(trace)
+            else:
+                non_overlay_traces.append(trace)
+
+        
+        fig = make_subplots(
+            rows=len(non_overlay_traces) + 1, 
+            cols=1, 
+            subplot_titles=tuple([name] + [t.name for t in non_overlay_traces]),
+        )
+
+        for t in main_trace:
+            fig.add_trace(t, row=1, col=1)
+
+        for i in range(len(non_overlay_traces)):
+            fig.add_trace(non_overlay_traces[i], row=2+i, col=1)
+
+        for row in filtered_trades.itertuples():
+            fig.add_annotation(x=row.entry_time, y=row.entry_price,
+                text= "LE" if row.direction > 0 else "SE",
+                showarrow=True,
+                arrowhead=1,
+                bgcolor="#ff7f0e",
+            )
+            fig.add_annotation(x=row.exit_time, y=row.exit_price,
+                text= "LEx" if row.direction > 0 else "SEx",
+                showarrow=True,
+                arrowhead=1,
+                bgcolor="#ff7f0e",
+            )
+
+        fig.update_layout(
+            hoversubplots="axis",
+            hovermode="x unified",
+            grid=dict(rows=row_count, columns=1),
+            autosize=True,
+            margin=dict(l=30, r=30, t=40, b=30),
+        )
+
+        fig.update_xaxes(
+            rangeslider_visible=False,
+        )
+
+        if jupyter:
+            return fig

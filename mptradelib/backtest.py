@@ -37,11 +37,7 @@ class Backtest:
         if 'entries' not in data.columns.to_list():
             raise KeyError('column "entries" not found.')
         
-        try:
-            data.loc[data.entries != 0, 'entry_price'] = data.open.shift(-1)
-        except Exception as e:
-            print(data, '.............')
-            raise e
+        data.loc[data.entries != 0, 'entry_price'] = data.open.shift(-1)
 
         data.loc[data.entries == 1, 'sl'] = data.close * (1 - self.params['sl']/100)
         data.loc[data.entries == 1, 'tp'] = data.close * (1 + self.params['tp']/100)
@@ -67,7 +63,7 @@ class Backtest:
     def _in_intraday_window(self, row):
         return row.datetime.time() < self.intraday_exit_time
 
-    def _generate_orders(self, data:pd.DataFrame):
+    def _generate_orders(self, data: pd.DataFrame):
         position = None
         orders = []
         for row in data.itertuples():
@@ -97,7 +93,9 @@ class Backtest:
                 constant_params[k] = v
         return opt_params, constant_params
     
-    def _get_overfitting_score(self, t):
+    def _get_overfitting_score(self, t: pd.DataFrame):
+        if t.empty:
+            return 0, None
         t['abs_profit'] = t.profit.abs()
         ts = t.sort_values(by=['abs_profit'], ascending=False)
         os = (ts[:int(len(ts)/100)].abs_profit.sum()/ts.abs_profit.sum())*100
