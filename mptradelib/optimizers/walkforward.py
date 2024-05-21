@@ -1,8 +1,9 @@
 import pydantic as pyd
 import pandas as pd
 from mptradelib.backtest import Backtest
-from typing import Callable, List
+from typing import Callable, List, Dict
 from tqdm import tqdm
+import numpy as np
 import plotly.graph_objects as go
 
 class Stage(pyd.BaseModel):
@@ -42,8 +43,10 @@ class Stage(pyd.BaseModel):
         self._opt_result = b.optimize(params)
         return self
 
-    def validate(self):
-        pass
+    def validate(self, compute, **kwargs):
+        b = Backtest(self.test_df, compute=compute)
+        trades, _ = b.run(**kwargs)
+        return trades
 
 
 class Walkforward(pyd.BaseModel):
@@ -85,6 +88,13 @@ class Walkforward(pyd.BaseModel):
 
     def _get_date(self, d, index):
         return d.datetime.iloc[index].strftime("%Y-%m-%d")
+    
+    def validate(self, compute, params):
+        results = []
+        for i in range(len(self.stages)):
+            r = self.stages[i].validate(compute, **params[i])
+            results.append(r)
+        return pd.concat(results)
 
     def plot_splits(self):
         stages = self._create_stages()
@@ -120,16 +130,16 @@ class Walkforward(pyd.BaseModel):
 class MultiSymbolWalkforwardAnalysis(pyd.BaseModel):
     model_config = pyd.ConfigDict(arbitrary_types_allowed=True)
 
-    dfs: List[pd.DataFrame]
+    dfs: Dict[str, pd.DataFrame]
     stage_count: int = 6
     test_fraction: float = 0.25
     strategy: Callable[[pd.DataFrame, dict],pd.DataFrame]
-    walkforwards: List[Walkforward] = []
+    walkforwards: Dict[str, Walkforward] = {}
     __computed_result = None
 
     def optimize(self, **params: dict):
         with tqdm(total=len(self.dfs)) as pb:
-            for df in self.dfs:
+            for k, df in self.dfs.items():
                 w = Walkforward(
                     df=df, 
                     stage_count=self.stage_count, 
@@ -138,21 +148,21 @@ class MultiSymbolWalkforwardAnalysis(pyd.BaseModel):
                 )
                 w.optimize(**params)
                 pb.update()
-                self.walkforwards.append(w)
+                self.walkforwards[k] = w
         return self
     
     @property
     def opt_result(self):
-        return [w.opt_result for w in self.walkforwards]
+        return [w.opt_result for w in self.walkforwards.values()]
 
     def transform_to_agg_stages(self):
         if self.__computed_result is not None:
             return self.__computed_result
         
         stages = []
-        for i in range(len(self.walkforwards[0].opt_result)):
+        for i in range(len(list(self.walkforwards.values())[0].opt_result)):
             stage = []
-            for sym in self.walkforwards:
+            for sym in self.walkforwards.values():
                 stage.append(sym.stages[i])
             stages.append(stage)
 
@@ -169,6 +179,57 @@ class MultiSymbolWalkforwardAnalysis(pyd.BaseModel):
                 result_agg['trades'] = pd.concat(result_agg['trades'])
                 pp.append(result_agg)
             final_result.append(pp)
+        self.__computed_result = final_result
+        return self.__computed_result
+
+    def create_pre_pivot_dfs(self, param_cols: tuple):
+        final_result = []
+        results_agg = []
+        default_cols = ['profit', 'trades', 'profit_perc']
+        cols = param_cols + default_cols
+        for i in range(len(list(self.walkforwards.values())[0].stages)):
+            for stage in self.transform_to_agg_stages()[i]:
+                row = [stage['params'][p] for p in param_cols]
+                row.append(round(stage['trades'].profit.sum(), 2))
+                row.append(stage['trades'])
+                row.append(self.profit_perc_sum(stage['trades']))
+                results_agg.append(row)
+            final_result.append(pd.DataFrame(results_agg, columns=cols))
         return final_result
 
+    def find_optimal_params(self, cols: tuple):
+        extracted_params = []
+        ppdf = self.create_pre_pivot_dfs(cols)
+        for d in ppdf:
+            profit_perc = d.pivot_table(values='profit_perc', index=[cols[0]], columns=[cols[1]])
+            p = self._find_optimal_param_for_test(profit_perc)
+            extracted_params.append(dict(zip(cols, p)))
+        return extracted_params
+    
+    def validate(self, sym, compute, params):
+        w = self.walkforwards[sym]
+        return w.validate(compute, params)
+        
+    def _find_optimal_param_for_test(self, d):        
+        sample = d.copy()
+        sample['mean'] = sample.mean(axis=1)
+        sample['sdv'] = sample.std(axis=1)
+        scoredf = sample
+
+        scoredf = scoredf.sort_values('mean')
+        scoredf['mean_score'] = np.arange(len(scoredf))
+        scoredf = scoredf.sort_values('sdv', ascending=False)
+        scoredf['sdv_score'] = np.arange(len(scoredf))
+        scoredf = scoredf.sort_index()
+        scoredf['score'] = scoredf.mean_score * scoredf.sdv_score
+
+        selected_param1 = scoredf.sort_values('score').score.idxmax()
+        selected_row = d.loc[selected_param1]
+
+        selected_param2 = selected_row.index[int(len(selected_row)/2)]
+        return selected_param1, selected_param2
+
+    def profit_perc_sum(self, d):
+        perc = d.profit/d.entry_price * 100
+        return perc.sum()
         
