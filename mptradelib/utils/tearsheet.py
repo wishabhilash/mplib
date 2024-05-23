@@ -3,6 +3,7 @@ import numpy as np
 from .simulated_trades import SimulateTrades
 import pydantic as pyd
 from typing import List
+import datetime as dt
 try:
     from plotly.subplots import make_subplots
     import plotly.graph_objects as go
@@ -16,6 +17,8 @@ class Line(pyd.BaseModel):
     overlay: bool = True
 
 class Tearsheet:
+    chart_fig: go.Figure = None
+
     def __init__(self, result: pd.DataFrame, seed=10000, leverage=1) -> None:
         self.df = result
         self._seed = seed
@@ -42,6 +45,8 @@ class Tearsheet:
         return round(r[0]/sum(r) * 100, 2)
     
     def drawdown(self):
+        if self.df.empty:
+            return None, None
         cum_profit = self.df.profit.cumsum()
         curr_max = cum_profit.expanding().max()
         dd = cum_profit - curr_max
@@ -50,6 +55,8 @@ class Tearsheet:
 
     def max_drawdown(self):
         dd, ddp = self.drawdown()
+        if dd is None:
+            return 0, 0
         return round(dd.min(), 2), round(ddp.min(), 2)
     
     def sharpe_ratio(self):
@@ -212,12 +219,13 @@ Fund growth (given {self._seed} seed):
         )
         fig.add_trace(drawdowns, row=1, col=1)
 
-
-    def plot_chart(self, name, df, trades, lines: List[Line], jupyter=False):
+    def plot_chart(self, name, df, trades, 
+                   from_date = dt.datetime.now().date(), 
+                   to_date = dt.datetime.now().date() + dt.timedelta(days=1),
+                   lines: List[Line] = [], jupyter=False):
         row_count = 1 + len([l for l in lines if not l.overlay])
-        last_date = df.iloc[len(df) - 1].datetime.date()
-        filtered_df = df[df.datetime.dt.date == last_date]
-        filtered_trades = trades[trades.entry_time.dt.date == last_date]
+        filtered_df = df[(df.datetime.dt.date >= from_date) & (df.datetime.dt.date < to_date)]
+        filtered_trades = trades[(trades.entry_time.dt.date >= from_date) & (trades.entry_time.dt.date >= to_date)]
 
         cs_chart = go.Candlestick(
             x=filtered_df.datetime,
@@ -226,7 +234,7 @@ Fund growth (given {self._seed} seed):
             low=filtered_df.low,
             close=filtered_df.close,
             showlegend=False,
-            name=name
+            name=name,
         )
 
         main_trace = [cs_chart]
@@ -243,44 +251,60 @@ Fund growth (given {self._seed} seed):
             else:
                 non_overlay_traces.append(trace)
 
+        row_height = round(1/(len(non_overlay_traces) + 4), 1)
+        row_heights = [ row_height for _ in range(len(non_overlay_traces) + 1)]
+        row_heights[0] = 4 * row_height
         
-        fig = make_subplots(
-            rows=len(non_overlay_traces) + 1, 
-            cols=1, 
-            subplot_titles=tuple([name] + [t.name for t in non_overlay_traces]),
-        )
+        if self.chart_fig is None:
+            self.chart_fig = make_subplots(
+                rows=len(non_overlay_traces) + 1, 
+                cols=1, 
+                subplot_titles=tuple([name] + [t.name for t in non_overlay_traces]),
+                row_heights=row_heights,
+                vertical_spacing=0.02,
+                shared_xaxes=True,
+            )
+        else:
+            self.chart_fig.data = []
 
         for t in main_trace:
-            fig.add_trace(t, row=1, col=1)
+            self.chart_fig.add_trace(t, row=1, col=1)
 
         for i in range(len(non_overlay_traces)):
-            fig.add_trace(non_overlay_traces[i], row=2+i, col=1)
+            self.chart_fig.add_trace(non_overlay_traces[i], row=2+i, col=1)
 
         for row in filtered_trades.itertuples():
-            fig.add_annotation(x=row.entry_time, y=row.entry_price,
+            self.chart_fig.add_annotation(x=row.entry_time, y=row.entry_price,
                 text= "LE" if row.direction > 0 else "SE",
                 showarrow=True,
                 arrowhead=1,
                 bgcolor="#ff7f0e",
             )
-            fig.add_annotation(x=row.exit_time, y=row.exit_price,
+            self.chart_fig.add_annotation(x=row.exit_time, y=row.exit_price,
                 text= "LEx" if row.direction > 0 else "SEx",
                 showarrow=True,
                 arrowhead=1,
                 bgcolor="#ff7f0e",
             )
 
-        fig.update_layout(
+        self.chart_fig.update_layout(
             hoversubplots="axis",
             hovermode="x unified",
             grid=dict(rows=row_count, columns=1),
             autosize=True,
             margin=dict(l=30, r=30, t=40, b=30),
+            height=800,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            )
         )
 
-        fig.update_xaxes(
+        self.chart_fig.update_xaxes(
             rangeslider_visible=False,
         )
 
-        if jupyter:
-            return fig
+        return self.chart_fig

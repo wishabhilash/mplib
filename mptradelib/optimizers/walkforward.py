@@ -6,6 +6,12 @@ from tqdm import tqdm
 import numpy as np
 import plotly.graph_objects as go
 
+class StrategyFuncs(pyd.BaseModel):
+    model_config = pyd.ConfigDict(arbitrary_types_allowed=True)
+
+    compute: Callable[[pd.DataFrame, dict], pd.DataFrame]
+    exit_func: Callable[[pd.DataFrame, dict], None] = None
+
 class Stage(pyd.BaseModel):
     model_config = pyd.ConfigDict(arbitrary_types_allowed=True)
 
@@ -38,13 +44,13 @@ class Stage(pyd.BaseModel):
     def _get_test_size(self):
         return int(self.stage_size * self.test_fraction)
 
-    def optimize(self, compute, **params: dict):
-        b = Backtest(self.opt_df, compute=compute)
+    def optimize(self, strategy_funcs: StrategyFuncs, **params: dict):
+        b = Backtest(self.opt_df, compute=strategy_funcs.compute, exit_func=strategy_funcs.exit_func)
         self._opt_result = b.optimize(params)
         return self
 
-    def validate(self, compute, **kwargs):
-        b = Backtest(self.test_df, compute=compute)
+    def validate(self, strategy_funcs: StrategyFuncs, **kwargs):
+        b = Backtest(self.test_df, compute=strategy_funcs.compute, exit_func=strategy_funcs.exit_func)
         trades, _ = b.run(**kwargs)
         return trades
 
@@ -55,7 +61,7 @@ class Walkforward(pyd.BaseModel):
     df: pd.DataFrame
     stage_count: int = 6
     test_fraction: float = 0.25
-    strategy: Callable[[pd.DataFrame, dict],pd.DataFrame]
+    strategy_funcs: StrategyFuncs
     stages: List[Stage] = []
 
     def _create_stages(self) -> List[Stage]:
@@ -73,12 +79,12 @@ class Walkforward(pyd.BaseModel):
         if show_progressbar:
             with tqdm(total=len(stages)) as pb:
                 for stage in stages:
-                    s = stage.optimize(self.strategy, **params)
+                    s = stage.optimize(self.strategy_funcs, **params)
                     self.stages.append(s)
                     pb.update()
         else:
             for stage in stages:
-                stage.optimize(self.strategy, **params)
+                stage.optimize(self.strategy_funcs, **params)
                 self.stages.append(stage)
         return self
     
@@ -89,10 +95,10 @@ class Walkforward(pyd.BaseModel):
     def _get_date(self, d, index):
         return d.datetime.iloc[index].strftime("%Y-%m-%d")
     
-    def validate(self, compute, params):
+    def validate(self, strategy_func, params):
         results = []
         for i in range(len(self.stages)):
-            r = self.stages[i].validate(compute, **params[i])
+            r = self.stages[i].validate(strategy_func, **params[i])
             results.append(r)
         return pd.concat(results)
 
@@ -133,7 +139,7 @@ class MultiSymbolWalkforwardAnalysis(pyd.BaseModel):
     dfs: Dict[str, pd.DataFrame]
     stage_count: int = 6
     test_fraction: float = 0.25
-    strategy: Callable[[pd.DataFrame, dict],pd.DataFrame]
+    strategy_funcs: StrategyFuncs
     walkforwards: Dict[str, Walkforward] = {}
     __computed_result = None
 
@@ -144,7 +150,7 @@ class MultiSymbolWalkforwardAnalysis(pyd.BaseModel):
                     df=df, 
                     stage_count=self.stage_count, 
                     test_fraction=self.test_fraction, 
-                    strategy=self.strategy
+                    strategy_funcs=self.strategy_funcs
                 )
                 w.optimize(**params)
                 pb.update()
@@ -189,6 +195,8 @@ class MultiSymbolWalkforwardAnalysis(pyd.BaseModel):
         cols = param_cols + default_cols
         for i in range(len(list(self.walkforwards.values())[0].stages)):
             for stage in self.transform_to_agg_stages()[i]:
+                if stage['trades'].empty:
+                    continue
                 row = [stage['params'][p] for p in param_cols]
                 row.append(round(stage['trades'].profit.sum(), 2))
                 row.append(stage['trades'])
@@ -206,9 +214,9 @@ class MultiSymbolWalkforwardAnalysis(pyd.BaseModel):
             extracted_params.append(dict(zip(cols, p)))
         return extracted_params
     
-    def validate(self, sym, compute, params):
+    def validate(self, sym, strategy_func, params):
         w = self.walkforwards[sym]
-        return w.validate(compute, params)
+        return w.validate(strategy_func, params)
         
     def _find_optimal_param_for_test(self, d):        
         sample = d.copy()
