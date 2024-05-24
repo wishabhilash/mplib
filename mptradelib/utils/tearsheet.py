@@ -219,6 +219,13 @@ Fund growth (given {self._seed} seed):
         )
         fig.add_trace(drawdowns, row=1, col=1)
 
+    def _get_holidays(self, dates):
+        start = dates.head(1).iloc[0].date()
+        end = dates.tail(1).iloc[0].date()
+        date_range = pd.date_range(start, end).difference(dates)
+        return list(date_range.strftime('%Y-%m-%d'))
+
+
     def plot_chart(self, name, df, trades, 
                    from_date = dt.datetime.now().date(), 
                    to_date = dt.datetime.now().date() + dt.timedelta(days=1),
@@ -256,7 +263,7 @@ Fund growth (given {self._seed} seed):
         row_heights[0] = 4 * row_height
         
         if self.chart_fig is None:
-            self.chart_fig = make_subplots(
+            fig = make_subplots(
                 rows=len(non_overlay_traces) + 1, 
                 cols=1, 
                 subplot_titles=tuple([name] + [t.name for t in non_overlay_traces]),
@@ -264,6 +271,7 @@ Fund growth (given {self._seed} seed):
                 vertical_spacing=0.02,
                 shared_xaxes=True,
             )
+            self.chart_fig = go.FigureWidget(fig) if jupyter is True else fig
         else:
             self.chart_fig.data = []
 
@@ -303,8 +311,14 @@ Fund growth (given {self._seed} seed):
             )
         )
 
+        holidays = self._get_holidays(filtered_df.datetime)
+
         self.chart_fig.update_xaxes(
             rangeslider_visible=False,
+            rangebreaks=[
+                dict(bounds=["sat", "mon"]),
+                dict(bounds=[15.5, 9.25], pattern="hour"),
+            ]
         )
 
         return self.chart_fig
