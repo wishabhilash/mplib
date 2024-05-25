@@ -19,6 +19,7 @@ class Backtest:
                  pd.DataFrame]=None, 
                  tp=2, sl=1,
                  intraday_exit_time: dt.time = dt.time(15,10,0),
+                 exit_func: Callable[[pd.DataFrame, dict], None]=None,
                  intraday=True):
         self.data = data
         self.compute = compute
@@ -26,6 +27,19 @@ class Backtest:
         self.params['sl'] = sl
         self.intraday = intraday
         self.intraday_exit_time = intraday_exit_time
+        if exit_func is None:
+            self.exit_func = self._exit_func
+        else:
+            self.exit_func = exit_func
+
+            
+    def _exit_func(self, df: pd.DataFrame, params: dict):
+        df.loc[df.entries == 1, 'sl'] = df.close * (1 - params['sl']/100)
+        df.loc[df.entries == 1, 'tp'] = df.close * (1 + params['tp']/100)
+
+        df.loc[df.entries == -1, 'sl'] = df.close * (1 + params['sl']/100)
+        df.loc[df.entries == -1, 'tp'] = df.close * (1 - params['tp']/100)
+        
 
     def run(self, **kwargs):
         self.params.update(kwargs)
@@ -39,12 +53,8 @@ class Backtest:
         
         data.loc[data.entries != 0, 'entry_price'] = data.open.shift(-1)
 
-        data.loc[data.entries == 1, 'sl'] = data.close * (1 - self.params['sl']/100)
-        data.loc[data.entries == 1, 'tp'] = data.close * (1 + self.params['tp']/100)
+        self.exit_func(data, self.params)
 
-        data.loc[data.entries == -1, 'sl'] = data.close * (1 + self.params['sl']/100)
-        data.loc[data.entries == -1, 'tp'] = data.close * (1 - self.params['tp']/100)
-        
         data['exit_price'] = data.open.shift(-1)
         data['trade_time'] = data.datetime.shift(-1)
 
@@ -108,6 +118,7 @@ class Backtest:
         if os > 10:
             r = rdf
             print("removing event effect - ", params)
+
         return {'params': params, 'trades': r}
 
 

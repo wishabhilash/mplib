@@ -39,7 +39,7 @@ class Historical:
             try:
                 final_data += data["candles"]
             except IndexError as e:
-                continue
+                raise e
             curr += delta + dt.timedelta(days=1)
         df = pd.DataFrame(final_data, columns=["datetime", "open", "high", "low", "close", "volume"])
         df.index = pd.to_datetime(df["datetime"], unit="s", utc=True)
