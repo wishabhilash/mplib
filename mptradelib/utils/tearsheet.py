@@ -1,9 +1,8 @@
 import pandas as pd
 import numpy as np
 from .simulated_trades import SimulateTrades
-import pydantic as pyd
-from typing import List
 import datetime as dt
+from .chart import *
 try:
     from plotly.subplots import make_subplots
     import plotly.graph_objects as go
@@ -11,10 +10,6 @@ try:
 except ImportError:
     print("please install plotly by 'pip install plotly' to enable plotting")
 
-class Line(pyd.BaseModel):
-    colname: str
-    name: str = None
-    overlay: bool = True
 
 class Tearsheet:
     chart_fig: go.Figure = None
@@ -225,14 +220,32 @@ Fund growth (given {self._seed} seed):
         date_range = pd.date_range(start, end).difference(dates)
         return list(date_range.strftime('%Y-%m-%d'))
 
+    def _get_row_heights(self, charts):
+        row_height = round(1/(len(charts) - 1 + 4), 2)
+        row_heights = [ row_height for _ in range(len(charts) - 1)]
+        return [4 * row_height] + row_heights
 
     def plot_chart(self, name, df, trades, 
                    from_date = dt.datetime.now().date(), 
                    to_date = dt.datetime.now().date() + dt.timedelta(days=1),
-                   lines: List[Line] = [], jupyter=False):
-        row_count = 1 + len([l for l in lines if not l.overlay])
+                   charts: List[Chart] = [], jupyter=False):
+        
+        if self.chart_fig is None:
+            fig = make_subplots(
+                rows=len(charts),
+                cols=1, 
+                subplot_titles=tuple([name] + [t.name for t in charts]),
+                row_heights=self._get_row_heights(charts),
+                vertical_spacing=0.02,
+                shared_xaxes=True,
+            )
+            self.chart_fig = go.FigureWidget(fig) if jupyter is True else fig
+        else:
+            self.chart_fig.data = []
+        
+        row_count = len(charts)
         filtered_df = df[(df.datetime.dt.date >= from_date) & (df.datetime.dt.date < to_date)]
-        filtered_trades = trades[(trades.entry_time.dt.date >= from_date) & (trades.entry_time.dt.date >= to_date)]
+        filtered_trades = trades[(trades.entry_time.dt.date >= from_date) & (trades.entry_time.dt.date <= to_date)]
 
         cs_chart = go.Candlestick(
             x=filtered_df.datetime,
@@ -244,42 +257,28 @@ Fund growth (given {self._seed} seed):
             name=name,
         )
 
-        main_trace = [cs_chart]
-        non_overlay_traces = []
-        for l in lines:
-            trace = go.Scatter(
-                x=filtered_df.datetime,
-                y=filtered_df[l.colname],
-                name=l.name,
-            )
-            
-            if l.overlay:
-                main_trace.append(trace)
-            else:
-                non_overlay_traces.append(trace)
-
-        row_height = round(1/(len(non_overlay_traces) + 4), 1)
-        row_heights = [ row_height for _ in range(len(non_overlay_traces) + 1)]
-        row_heights[0] = 4 * row_height
-        
-        if self.chart_fig is None:
-            fig = make_subplots(
-                rows=len(non_overlay_traces) + 1, 
-                cols=1, 
-                subplot_titles=tuple([name] + [t.name for t in non_overlay_traces]),
-                row_heights=row_heights,
-                vertical_spacing=0.02,
-                shared_xaxes=True,
-            )
-            self.chart_fig = go.FigureWidget(fig) if jupyter is True else fig
-        else:
-            self.chart_fig.data = []
-
-        for t in main_trace:
-            self.chart_fig.add_trace(t, row=1, col=1)
-
-        for i in range(len(non_overlay_traces)):
-            self.chart_fig.add_trace(non_overlay_traces[i], row=2+i, col=1)
+        self.chart_fig.add_trace(cs_chart, row=1, col=1)
+        for i in range(len(charts)):
+            chart = charts[i]
+            for c in chart.children:
+                if isinstance(c, Line):
+                    self.chart_fig.add_trace(
+                        c.get_trace(filtered_df), 
+                        row=1 if chart.main else i + 1, 
+                        col=1
+                    )
+                elif isinstance(c, Rect):
+                    self.chart_fig.add_shape(
+                        c.get_trace(filtered_df),
+                        row=1 if chart.main else i + 1, 
+                        col=1
+                    )
+                elif isinstance(c, Background):
+                    self.chart_fig.add_vrect(
+                        **c.get_trace(filtered_df), 
+                        row=1 if chart.main else i + 1, 
+                        col=1
+                    )
 
         for row in filtered_trades.itertuples():
             self.chart_fig.add_annotation(x=row.entry_time, y=row.entry_price,
