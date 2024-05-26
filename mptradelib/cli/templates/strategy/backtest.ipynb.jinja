@@ -1,18 +1,10 @@
 {
  "cells": [
   {
-   "cell_type": "code",
-   "execution_count": null,
+   "cell_type": "markdown",
    "metadata": {},
-   "outputs": [],
    "source": [
-    "import pandas_ta as ta\n",
-    "import numpy as np\n",
-    "from mptradelib.backtest import Backtest\n",
-    "from mptradelib.broker.session import FyersSession\n",
-    "from mptradelib.broker.broker import Historical\n",
-    "from mptradelib.utils import Tearsheet\n",
-    "import datetime as dt"
+    "# Download and update historical data"
    ]
   },
   {
@@ -21,82 +13,274 @@
    "metadata": {},
    "outputs": [],
    "source": [
-    "def cross(ema1, ema2):\n",
-    "    return (ema1 > ema2) & (ema1.shift(1) < ema2.shift(1))\n",
+    "import datetime as dt\n",
+    "from mptradelib.broker.broker import Historical, FyersSession\n",
+    "from mptradelib.utils.downloader import download_historical\n",
+    "import pandas as pd\n",
     "\n",
-    "def compute(df, params):\n",
-    "    df['ema_fast'] = ta.ema(df.close, params['ema_fast_len'])\n",
-    "    df['ema_slow'] = ta.ema(df.close, params['ema_slow_len'])\n",
-    "    df['ema_trend'] = ta.ema(df.close, params['ema_trend_filter_len'])\n",
-    "\n",
-    "    long_cond = (cross(df.ema_fast, df.ema_slow)) & (df.close > df.ema_trend)\n",
-    "    short_cond = (cross(df.ema_slow, df.ema_fast)) & (df.close < df.ema_trend)\n",
-    "\n",
-    "    df['long'] = np.where(long_cond, 1, 0)\n",
-    "    df['long_entries'] = np.where((df.long == 1) & (df.long.shift(1) != 1), 1, 0)\n",
-    "\n",
-    "    df['short'] = np.where(short_cond, -1, 0)\n",
-    "    df['short_entries'] = np.where((df.short == -1) & (df.short.shift(1) != -1), -1, 0)\n",
-    "\n",
-    "    df['entries'] = df.long_entries + df.short_entries\n",
-    "    return df"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
+    "start = pd.Timestamp('2017-01-01', tz='Asia/Kolkata')\n",
+    "end = pd.Timestamp(f'{dt.datetime.now():%Y-%m-%d}', tz='Asia/Kolkata')\n",
     "h = Historical(FyersSession())\n",
+    "resolution = 5\n",
+    "download_historical(h, [\"NSE:SBIN-EQ\"], start, end, resolution)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Optimize and run 1 Stock"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import code\n",
+    "from mptradelib.backtest import Backtest\n",
+    "import datetime as dt\n",
+    "from mptradelib.utils import Tearsheet\n",
+    "import pandas as pd\n",
     "\n",
-    "end = dt.datetime.now() - dt.timedelta(days=365*2)\n",
-    "start = end - dt.timedelta(days=365*5)\n",
-    "df = h.historical(\"NSE:SBIN-EQ\", resolution=5, start=start, end=end)\n",
+    "symbol = 'NSE:SBIN-EQ'\n",
+    "resolution = 5\n",
     "\n",
-    "b = Backtest(df, compute, sl=1, tp=2, intraday=True)\n",
+    "df = pd.read_parquet(f\"data/{symbol}-{resolution}.parquet\")\n",
+    "df = df[df.datetime.dt.date >= dt.date(2022,1,1)]\n",
     "\n",
-    "r = b.optimize(\n",
-    "    runs=2,\n",
-    "    ema_fast_len=range(1, 20),\n",
-    "    ema_slow_len=range(20, 50),\n",
-    "    ema_trend_filter_len=range(100, 300),\n",
-    "    sl=range(1),\n",
-    "    tp=range(1, 10),\n",
+    "pramas = {'fast_ema': 40.0, 'slow_ema': 100.0, 'trend_ema': 200.0, 'sl': 1.0, 'tp': 2.0}\n",
+    "b = Backtest(df.reset_index(drop=True), code.compute, exit_func=code.exit_func)\n",
+    "out, resdf = b.run(**pramas)\n",
+    "out.to_csv('trades.csv', index=False)\n",
+    "tear = Tearsheet(out)\n",
+    "tear.print()\n",
+    "tear.plot()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from mptradelib.widgets.daterangepicker import DateRangePicker\n",
+    "import ipywidgets as widgets\n",
+    "from mptradelib.utils import Line, Chart, Rect, Background\n",
+    "\n",
+    "line_fast_ema = Line(colname='fast_ema', name=\"Fast EMA\")\n",
+    "line_slow_ema = Line(colname='slow_ema', name=\"Slow EMA\")\n",
+    "line_trend_ema = Line(colname='trend_ema', name=\"Trend EMA\")\n",
+    "\n",
+    "\n",
+    "line_atr = Line(colname='atr', name=\"ATR\", overlay=False)\n",
+    "line_atr_perc = Line(colname='atr_perc', name=\"ATR %\", overlay=False)\n",
+    "back = Background(x0=resdf.tail(10).iloc[0].datetime, x1=resdf.tail(1).iloc[0].datetime)\n",
+    "\n",
+    "cmain = Chart(name=\"Main\", children=[line_fast_ema, line_slow_ema, line_trend_ema, back], main=True)\n",
+    "catr = Chart(name=\"ATR\", children=[line_atr])\n",
+    "catrperc = Chart(name=\"ATR %\", children=[line_atr_perc])\n",
+    "charts = [cmain, catr, catrperc]\n",
+    "\n",
+    "fig = None\n",
+    "\n",
+    "def handler(from_date, to_date):\n",
+    "    global fig\n",
+    "    fig = tear.plot_chart(\"SBIN Overview\", resdf, out, from_date, to_date, charts, jupyter=True)\n",
+    "date_range_picker = DateRangePicker(handler=handler, default_from_date=dt.datetime.now().date() - dt.timedelta(days=2))\n",
+    "dpp = widgets.HBox(date_range_picker.get_widget())\n",
+    "date_range_picker.trigger()\n",
+    "widgets.VBox([dpp, fig])"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Walk forward analysis"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Load data"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import pandas as pd\n",
+    "from tqdm import tqdm\n",
+    "import datetime as dt\n",
+    "\n",
+    "dfs = {}\n",
+    "load_list = ['NSE:SBIN-EQ', 'NSE:RELIANCE-EQ'] # Use loads of stocks to find stable params\n",
+    "resolution = 5\n",
+    "with tqdm(total=len(load_list)) as pb:\n",
+    "    for n in load_list:\n",
+    "        df = pd.read_parquet(f'data/{n}-{resolution}.parquet')\n",
+    "        df.datetime = pd.to_datetime(df.datetime, format='%Y-%m-%d %H:%M:%S%z')\n",
+    "        dfs[n] = df[df.datetime.dt.date >= dt.date(2022,1,1)]\n",
+    "        pb.update()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Walkforward"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from walkforward import MultiSymbolWalkforwardAnalysis, StrategyFuncs\n",
+    "import code\n",
+    "\n",
+    "strategy_func = Strategycode(compute=code.compute, exit_func=code.exit_func)\n",
+    "\n",
+    "mw = MultiSymbolWalkforwardAnalysis(dfs=dfs, strategy_funcs=strategy_func)\n",
+    "mw = mw.optimize(**{\n",
+    "    'fast_ema': range(5, 70, 5),\n",
+    "    'slow_ema': range(70, 140, 10),\n",
+    "    \"trend_ema\": 200,\n",
+    "    \"sl\": 2,\n",
+    "    \"tp\": 2,\n",
+    "    'show_progressbar': False\n",
+    "})"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from mptradelib.utils import Tearsheet\n",
+    "\n",
+    "f = mw.find_optimal_params(['fast_ema', 'slow_ema'])\n",
+    "print(f)\n",
+    "[i.update({\"trend_ema\": 200, \"sl\": 1, \"tp\": 2}) for i in f]\n",
+    "t = mw.validate(\"NSE:RELIANCE-EQ\", strategy_func, f)\n",
+    "pp = Tearsheet(t.reset_index(drop=True))\n",
+    "pp.print()\n",
+    "pp.plot()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import pandas as pd\n",
+    "import plotly.graph_objects as go\n",
+    "import ipywidgets as widgets\n",
+    "\n",
+    "def profit_perc_sum(d):\n",
+    "    perc = d.profit/d.entry_price * 100\n",
+    "    return perc.sum()\n",
+    "\n",
+    "def figfig(fig: go.FigureWidget, d, title):\n",
+    "    if fig is None:\n",
+    "        fig = go.FigureWidget(layout=go.Layout())\n",
+    "    else:\n",
+    "        fig.data = []\n",
+    "\n",
+    "    for row in d.itertuples():\n",
+    "        fig.add_trace(trace=go.Bar(\n",
+    "            x=d.columns,\n",
+    "            y=list(row)[1:],\n",
+    "            name=row.Index\n",
+    "        ))\n",
+    "    fig.update_layout(\n",
+    "        title={\"text\": f\"{title}\"},\n",
+    "        margin=dict(l=40, r=40, t=40, b=40),\n",
+    "        height=200,\n",
+    "        width=500\n",
+    "    )\n",
+    "    return fig\n",
+    "\n",
+    "profit_perc_fig = None\n",
+    "profits_fig = None\n",
+    "trades_fig = None\n",
+    "\n",
+    "def get_chat_dfs(n):\n",
+    "    results_agg = [(\n",
+    "        r['params']['fast_ema'], \n",
+    "        r['params']['slow_ema'], \n",
+    "        round(r['trades'].profit.sum(), 2), \n",
+    "        len(r['trades']),\n",
+    "        profit_perc_sum(r['trades'])\n",
+    "    ) for r in mw.transform_to_agg_stages()[n]]\n",
+    "    return pd.DataFrame(results_agg, columns=['fast_ema', 'slow_ema', 'profit', 'trades', 'profit_perc'])\n",
+    "\n",
+    "def create_pivots(_df, column=\"profit\"):\n",
+    "    return _df.pivot_table(values=column, index=['slow_ema'], columns=['fast_ema'])\n",
+    "\n",
+    "def on_change(obj):\n",
+    "    pdf = get_chat_dfs(int(obj['new']) - 1)\n",
+    "\n",
+    "    profits = create_pivots(pdf, 'profit')\n",
+    "    profit_perc = create_pivots(pdf, 'profit_perc')\n",
+    "    trades = create_pivots(pdf, 'trades')\n",
+    "    \n",
+    "    global profit_perc_fig\n",
+    "    global profits_fig\n",
+    "    global trades_fig\n",
+    "\n",
+    "    profits_fig = figfig(profits_fig, profits, 'profits')\n",
+    "    profit_perc_fig = figfig(profit_perc_fig, profit_perc, 'profit %')\n",
+    "    trades_fig = figfig(trades_fig, trades, 'trades')\n",
+    "\n",
+    "\n",
+    "dd = widgets.Dropdown(\n",
+    "    options=[f'{i}' for i in range(1, 7)],\n",
+    "    description='Stage: ',\n",
+    "    disabled=False,\n",
     ")\n",
     "\n",
-    "print(f\"Optimization result: {r[0]}\")"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "end = dt.datetime.now()\n",
-    "start = end - dt.timedelta(days=365*2)\n",
-    "df = h.historical(\"NSE:SBIN-EQ\", resolution=5, start=start, end=end)\n",
+    "init_data = get_chat_dfs(0)\n",
     "\n",
-    "b = Backtest(df, compute, sl=1, tp=2, intraday=True)\n",
-    "out = b.run(**{k: int(v) for k, v in r[0].items()})\n",
-    "print(\"Profit: \", np.sum(out[0].profit))"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "t = Tearsheet(out[0])\n",
-    "t.print()"
+    "init_profits = create_pivots(init_data, 'profit')\n",
+    "init_profit_perc = create_pivots(init_data, 'profit_perc')\n",
+    "init_trades = create_pivots(init_data, 'trades')\n",
+    "\n",
+    "profits_fig = figfig(None, init_profits, 'profits')\n",
+    "profit_perc_fig = figfig(None, init_profit_perc, 'profit %')\n",
+    "trades_fig = figfig(None, init_trades, 'trades')\n",
+    "\n",
+    "display(dd)\n",
+    "dd.observe(on_change, names=\"value\")\n",
+    "widgets.HBox([profit_perc_fig, profits_fig, trades_fig])"
    ]
   }
  ],
  "metadata": {
+  "kernelspec": {
+   "display_name": ".venv",
+   "language": "python",
+   "name": "python3"
+  },
   "language_info": {
-   "name": "python"
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.10.13"
   }
  },
  "nbformat": 4,

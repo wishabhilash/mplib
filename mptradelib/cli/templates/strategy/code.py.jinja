@@ -1,0 +1,22 @@
+import pandas_ta as ta
+import numpy as np
+
+def compute(df, params):
+    df['fast_ema'] = ta.ema(df.close, params['fast_ema'])
+    df['slow_ema'] = ta.ema(df.close, params['slow_ema'])
+    df['trend_ema'] = ta.ema(df.close, params['trend_ema'])
+    df['atr'] = ta.atr(high=df.high, low=df.low, close=df.close, length=14)
+    df['atr_perc'] = ta.atr(high=df.high, low=df.low, close=df.close, length=14)/df.close * 100
+
+    long_cond = (ta.cross(df.fast_ema, df.slow_ema)) & (df.close > df.trend_ema) #& (df.atr_perc > 0.3)
+
+    df['long'] = np.where(long_cond, 1, 0)
+    df['long_entries'] = np.where((df.long == 1) & (df.long.shift(1) != 1), 1, 0)
+
+    df['entries'] = df.long_entries
+    return df
+
+def exit_func(df, params):
+    df.loc[df.entries == 1, 'sl'] = df.close - df.atr * params['sl']
+    df.loc[df.entries == 1, 'tp'] = df.close + df.atr * params['tp']
+
