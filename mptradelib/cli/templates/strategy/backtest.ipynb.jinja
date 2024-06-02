@@ -13,6 +13,61 @@
    "metadata": {},
    "outputs": [],
    "source": [
+    "nifty50 = [\n",
+    "    \"NSE:RELIANCE-EQ\",\n",
+    "    \"NSE:HDFCBANK-EQ\",\n",
+    "    \"NSE:INFY-EQ\",\n",
+    "    \"NSE:TCS-EQ\",\n",
+    "    \"NSE:ICICIBANK-EQ\",\n",
+    "    \"NSE:KOTAKBANK-EQ\",\n",
+    "    \"NSE:HINDUNILVR-EQ\",\n",
+    "    \"NSE:ITC-EQ\",\n",
+    "    \"NSE:LT-EQ\",\n",
+    "    \"NSE:SBIN-EQ\",\n",
+    "    \"NSE:BHARTIARTL-EQ\",\n",
+    "    \"NSE:AXISBANK-EQ\",\n",
+    "    \"NSE:MARUTI-EQ\",\n",
+    "    \"NSE:BAJFINANCE-EQ\",\n",
+    "    \"NSE:ASIANPAINT-EQ\",\n",
+    "    \"NSE:NESTLEIND-EQ\",\n",
+    "    \"NSE:ULTRACEMCO-EQ\",\n",
+    "    \"NSE:WIPRO-EQ\",\n",
+    "    \"NSE:M&M-EQ\",\n",
+    "    \"NSE:POWERGRID-EQ\",\n",
+    "    \"NSE:TECHM-EQ\",\n",
+    "    \"NSE:HCLTECH-EQ\",\n",
+    "    \"NSE:TITAN-EQ\",\n",
+    "    \"NSE:BAJAJ-AUTO-EQ\",\n",
+    "    \"NSE:SUNPHARMA-EQ\",\n",
+    "    \"NSE:DRREDDY-EQ\",\n",
+    "    \"NSE:NTPC-EQ\",\n",
+    "    \"NSE:COALINDIA-EQ\",\n",
+    "    \"NSE:HEROMOTOCO-EQ\",\n",
+    "    \"NSE:BPCL-EQ\",\n",
+    "    \"NSE:ONGC-EQ\",\n",
+    "    \"NSE:INDUSINDBK-EQ\",\n",
+    "    \"NSE:TATASTEEL-EQ\",\n",
+    "    \"NSE:SHREECEM-EQ\",\n",
+    "    \"NSE:GRASIM-EQ\",\n",
+    "    \"NSE:IOC-EQ\",\n",
+    "    \"NSE:DIVISLAB-EQ\",\n",
+    "    \"NSE:CIPLA-EQ\",\n",
+    "    \"NSE:ADANIPORTS-EQ\",\n",
+    "    \"NSE:JSWSTEEL-EQ\",\n",
+    "    \"NSE:HINDALCO-EQ\",\n",
+    "    \"NSE:GAIL-EQ\",\n",
+    "    \"NSE:TATACONSUM-EQ\",\n",
+    "    \"NSE:UPL-EQ\",\n",
+    "    \"NSE:LALPATHLAB-EQ\",\n",
+    "]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
     "import datetime as dt\n",
     "from mptradelib.broker.broker import Historical, FyersSession\n",
     "from mptradelib.utils.downloader import download_historical\n",
@@ -22,7 +77,7 @@
     "end = pd.Timestamp(f'{dt.datetime.now():%Y-%m-%d}', tz='Asia/Kolkata')\n",
     "h = Historical(FyersSession())\n",
     "resolution = 5\n",
-    "download_historical(h, [\"NSE:SBIN-EQ\"], start, end, resolution)"
+    "download_historical(h, nifty50, start, end, resolution)"
    ]
   },
   {
@@ -38,20 +93,20 @@
    "metadata": {},
    "outputs": [],
    "source": [
-    "import code\n",
+    "import funcs\n",
     "from mptradelib.backtest import Backtest\n",
     "import datetime as dt\n",
     "from mptradelib.utils import Tearsheet\n",
     "import pandas as pd\n",
     "\n",
-    "symbol = 'NSE:SBIN-EQ'\n",
+    "symbol = 'NSE:RELIANCE-EQ'\n",
     "resolution = 5\n",
     "\n",
     "df = pd.read_parquet(f\"data/{symbol}-{resolution}.parquet\")\n",
     "df = df[df.datetime.dt.date >= dt.date(2022,1,1)]\n",
     "\n",
     "pramas = {'fast_ema': 40.0, 'slow_ema': 100.0, 'trend_ema': 200.0, 'sl': 1.0, 'tp': 2.0}\n",
-    "b = Backtest(df.reset_index(drop=True), code.compute, exit_func=code.exit_func)\n",
+    "b = Backtest(df.reset_index(drop=True), funcs.compute, exit_func=funcs.exit_func)\n",
     "out, resdf = b.run(**pramas)\n",
     "out.to_csv('trades.csv', index=False)\n",
     "tear = Tearsheet(out)\n",
@@ -95,6 +150,30 @@
    ]
   },
   {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "curr_cash = 10000\n",
+    "curr_date = None\n",
+    "for row in out.itertuples():\n",
+    "    if curr_date is None:\n",
+    "        curr_date = row.entry_time.date\n",
+    "    profit = int(curr_cash/row.entry_price) * row.profit\n",
+    "    if profit < 0:\n",
+    "        curr_cash -= profit\n",
+    "    "
+   ]
+  },
+  {
    "cell_type": "markdown",
    "metadata": {},
    "source": [
@@ -119,7 +198,7 @@
     "import datetime as dt\n",
     "\n",
     "dfs = {}\n",
-    "load_list = ['NSE:SBIN-EQ', 'NSE:RELIANCE-EQ'] # Use loads of stocks to find stable params\n",
+    "load_list = nifty50[:1]\n",
     "resolution = 5\n",
     "with tqdm(total=len(load_list)) as pb:\n",
     "    for n in load_list:\n",
@@ -142,10 +221,10 @@
    "metadata": {},
    "outputs": [],
    "source": [
-    "from walkforward import MultiSymbolWalkforwardAnalysis, StrategyFuncs\n",
-    "import code\n",
+    "from mptradelib.optimizers.walkforward import MultiSymbolWalkforwardAnalysis, StrategyFuncs\n",
+    "import funcs\n",
     "\n",
-    "strategy_func = Strategycode(compute=code.compute, exit_func=code.exit_func)\n",
+    "strategy_func = StrategyFuncs(compute=funcs.compute, exit_func=funcs.exit_func)\n",
     "\n",
     "mw = MultiSymbolWalkforwardAnalysis(dfs=dfs, strategy_funcs=strategy_func)\n",
     "mw = mw.optimize(**{\n",
@@ -156,6 +235,15 @@
     "    \"tp\": 2,\n",
     "    'show_progressbar': False\n",
     "})"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "mw.transform_to_agg_stages()[2]\n"
    ]
   },
   {

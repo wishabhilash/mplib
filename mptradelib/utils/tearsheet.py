@@ -14,25 +14,24 @@ except ImportError:
 class Tearsheet:
     chart_fig: go.Figure = None
 
-    def __init__(self, result: pd.DataFrame, seed=10000, leverage=1) -> None:
-        self.df = result
-        self._seed = seed
-        self._leverage = leverage
+    def __init__(self, s: SimulateTrades) -> None:
+        self._s = s
+        self.mdf = self._s.run()
 
     def profit_factor(self):
-        r = self.df[self.df.profit > 0].profit.sum()/abs(self.df[self.df.profit < 0].profit.sum())
+        r = self.mdf[self.mdf.sim_profit > 0].sim_profit.sum()/abs(self.mdf[self.mdf.sim_profit < 0].sim_profit.sum())
         return round(r, 2)
 
     def total_profit(self):
-        return round(np.sum(self.df.profit), 2)
+        return round(np.sum(self.mdf.sim_profit), 2)
     
     def peak_profit(self):
-        return round(self.df.profit.cumsum().max(), 2)
+        return round(self.mdf.sim_profit.cumsum().max(), 2)
     
     def win_vs_loss(self):
         return (
-            len(self.df[self.df.profit >= 0]),
-            len(self.df[self.df.profit < 0]),
+            len(self.mdf[self.mdf.sim_profit >= 0]),
+            len(self.mdf[self.mdf.sim_profit < 0]),
         )
     
     def win_rate(self):
@@ -40,9 +39,9 @@ class Tearsheet:
         return round(r[0]/sum(r) * 100, 2)
     
     def drawdown(self):
-        if self.df.empty:
+        if self.mdf.empty:
             return None, None
-        cum_profit = self.df.profit.cumsum()
+        cum_profit = self.mdf.sim_profit.cumsum()
         curr_max = cum_profit.expanding().max()
         dd = cum_profit - curr_max
         perc = dd/curr_max * 100
@@ -55,35 +54,33 @@ class Tearsheet:
         return round(dd.min(), 2), round(ddp.min(), 2)
     
     def sharpe_ratio(self):
-        n = len(self.df.profit)
-        return round(np.sqrt(n) * np.mean(self.df.profit)/np.std(self.df.profit), 2)
+        n = len(self.mdf.sim_profit)
+        return round(np.sqrt(n) * np.mean(self.mdf.sim_profit)/np.std(self.mdf.sim_profit), 2)
     
     def avg_profit(self):
-        profit_trades = self.df[self.df.profit > 0]
-        return profit_trades.profit.mean()
+        return self.mdf[self.mdf.sim_profit > 0].sim_profit.mean()
     
     def avg_loss(self):
-        loss_trades = self.df[self.df.profit < 0]
-        return loss_trades.profit.mean()
+        return self.mdf[self.mdf.sim_profit < 0].sim_profit.mean()
     
     def risk_reward_ratio(self):
         return abs(self.avg_profit()/self.avg_loss())
     
     def long_short_composition(self):
-        positive = self.df[self.df.profit > 0].groupby('direction').agg({'profit': 'sum'})
-        negative = self.df[self.df.profit < 0].groupby('direction').agg({'profit': 'sum'}).rename(columns={'profit': 'loss'})
+        positive = self.mdf[self.mdf.sim_profit > 0].groupby('direction').agg({'sim_profit': 'sum'})
+        negative = self.mdf[self.mdf.sim_profit < 0].groupby('direction').agg({'sim_profit': 'sum'}).rename(columns={'sim_profit': 'loss'})
         return pd.concat([positive, negative], axis=1).round(2).rename(index={1: 'long', -1: 'short'})
     
-    def fund_growth(self):
-        s = SimulateTrades(self.df.dropna(), initial_cash=self._seed, leverage=self._leverage)
-        return s.simple(), s.compound()
+    def final_balance(self):        
+        return round(self.mdf.sim_profit.sum() + self._s._initial_cash, 2)
 
     def print(self):
         mdd, _ = self.max_drawdown()
-        ncom, com = self.fund_growth()
         output = f'''
-Performance metrics (From: {self.df.iloc[0].entry_time.date()} To: {self.df.iloc[-1].entry_time.date()})
+Performance metrics (From: {self.mdf.iloc[0].entry_time.date()} To: {self.mdf.iloc[-1].entry_time.date()})
 
+Initial balance:        {self._s._initial_cash}
+Final balance:          {self.final_balance()}
 Total profit:           {self.total_profit()}
 Peak profit:            {self.peak_profit()}
 Profit factor:          {self.profit_factor()}
@@ -94,14 +91,11 @@ Avg. Loss:              {self.avg_loss()}
 Risk-Reward Ratio:      {self.risk_reward_ratio()}
 Max Drawdown:           {mdd}
 Sharpe ratio:           {self.sharpe_ratio()}
-Fund growth (given {self._seed} seed):
-    Simple -            {ncom}
-    Compounded -        {com}
 '''
         print(output)
 
     def plot(self):
-        fig = make_subplots(rows=2, cols=2, subplot_titles=("Cum. profit", "Daywise profit", "Long Short Split"))
+        fig = make_subplots(rows=2, cols=2, subplot_titles=("Cum. profit", "Daywise", "Long Short Split", "Hourwise"))
         self.plot_equity_curve(fig)
         self.plot_daywise_metrics(fig)
         self.plot_long_short_composition(fig)
@@ -116,28 +110,28 @@ Fund growth (given {self._seed} seed):
         fig.show()
 
     def plot_hourwise_metrics(self, fig: go.Figure):
-        r = self.df.groupby(self.df.entry_time.dt.hour).agg({'profit': 'sum'})
-        gdf = self.df[self.df.profit > 0].groupby(self.df.entry_time.dt.hour).agg({'profit': 'count'})
-        ldf = self.df[self.df.profit < 0].groupby(self.df.entry_time.dt.hour).agg({'profit': 'count'})
+        r = self.mdf.groupby(self.mdf.entry_time.dt.hour).agg({'sim_profit': 'sum'})
+        gdf = self.mdf[self.mdf.sim_profit > 0].groupby(self.mdf.entry_time.dt.hour).agg({'sim_profit': 'count'})
+        ldf = self.mdf[self.mdf.sim_profit < 0].groupby(self.mdf.entry_time.dt.hour).agg({'sim_profit': 'count'})
 
         trace = go.Bar(
             name='Total profit',
             x=r.index,
-            y=r.profit
+            y=r.sim_profit
         )
         fig.add_trace(trace, row=2, col=2)
 
         trace2 = go.Bar(
             name='Profit trades',
             x=gdf.index,
-            y=gdf.profit
+            y=gdf.sim_profit
         )
         fig.add_trace(trace2, row=2, col=2)
 
         trace3 = go.Bar(
             name='Loss trades',
             x=ldf.index,
-            y=ldf.profit
+            y=ldf.sim_profit
         )
         fig.add_trace(trace3, row=2, col=2)
 
@@ -146,8 +140,8 @@ Fund growth (given {self._seed} seed):
         trace = go.Bar(
             name='Profit',
             x=r.index,
-            y=r.profit,
-            text=r.profit,
+            y=r.sim_profit,
+            text=r.sim_profit,
             textposition="inside",
             textfont_color="white",
             marker_color='rgb(153, 204, 0, 120)'
@@ -167,36 +161,36 @@ Fund growth (given {self._seed} seed):
 
     def plot_daywise_metrics(self, fig: go.Figure):
         cats = [ 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-        r = self.df.groupby(self.df.entry_time.dt.day_name()).agg({'profit': 'sum'}).reindex(cats)
-        gdf = self.df[self.df.profit > 0].groupby(self.df.entry_time.dt.day_name()).agg({'profit': 'count'})
-        ldf = self.df[self.df.profit < 0].groupby(self.df.entry_time.dt.day_name()).agg({'profit': 'count'})
+        r = self.mdf.groupby(self.mdf.entry_time.dt.day_name()).agg({'sim_profit': 'sum'}).reindex(cats)
+        gdf = self.mdf[self.mdf.sim_profit > 0].groupby(self.mdf.entry_time.dt.day_name()).agg({'sim_profit': 'count'})
+        ldf = self.mdf[self.mdf.sim_profit < 0].groupby(self.mdf.entry_time.dt.day_name()).agg({'sim_profit': 'count'})
 
         trace = go.Bar(
             name='Total profit',
             x=r.index,
-            y=r.profit
+            y=r.sim_profit
         )
         fig.add_trace(trace, row=1, col=2)
 
         trace2 = go.Bar(
             name='Profit trades',
             x=gdf.index,
-            y=gdf.profit
+            y=gdf.sim_profit
         )
         fig.add_trace(trace2, row=1, col=2)
 
         trace3 = go.Bar(
             name='Loss trades',
             x=ldf.index,
-            y=ldf.profit
+            y=ldf.sim_profit
         )
         fig.add_trace(trace3, row=1, col=2)
         
     def plot_equity_curve(self, fig: go.Figure):
         cum_profit = go.Scatter(
             name="Cumulative Profit",
-            x=self.df.entry_time, 
-            y=self.df.profit.cumsum(), 
+            x=self.mdf.entry_time, 
+            y=self.mdf.sim_profit.cumsum() + self._s._initial_cash,
             fill="tozeroy", 
             fillcolor="rgb(153, 204, 0, 120)", 
             line={'color': 'rgb(153, 204, 0, 120)'}, 
@@ -206,7 +200,7 @@ Fund growth (given {self._seed} seed):
         dd, _ = self.drawdown()
         drawdowns = go.Scatter(
             name="Drawdown",
-            x=self.df.entry_time,
+            x=self.mdf.entry_time,
             y=dd,
             fill="tozeroy",
             fillcolor="rgba(228,128,68,120)",
@@ -215,6 +209,8 @@ Fund growth (given {self._seed} seed):
         fig.add_trace(drawdowns, row=1, col=1)
 
     def _get_holidays(self, dates):
+        if not len(dates):
+            return []
         start = dates.head(1).iloc[0].date()
         end = dates.tail(1).iloc[0].date()
         date_range = pd.date_range(start, end).difference(dates)
@@ -242,6 +238,7 @@ Fund growth (given {self._seed} seed):
             self.chart_fig = go.FigureWidget(fig) if jupyter is True else fig
         else:
             self.chart_fig.data = []
+            self.chart_fig.layout['annotations'] = None
         
         row_count = len(charts)
         filtered_df = df[(df.datetime.dt.date >= from_date) & (df.datetime.dt.date < to_date)]

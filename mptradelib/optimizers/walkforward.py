@@ -4,7 +4,12 @@ from mptradelib.backtest import Backtest
 from typing import Callable, List, Dict
 from tqdm import tqdm
 import numpy as np
-import plotly.graph_objects as go
+
+try:
+    import plotly.graph_objects as go
+except ImportError as e:
+    print('install plotly by "pip install plotly"')
+
 
 class StrategyFuncs(pyd.BaseModel):
     model_config = pyd.ConfigDict(arbitrary_types_allowed=True)
